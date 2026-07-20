@@ -49,6 +49,16 @@ Sourceful does **not** ask the model to invent a credibility score. The model ex
 
 Domain diversity is a proxy rather than proof of editorial independence, and cited-reference density is not treated as web-wide inbound citation count.
 
+### Bounded evidence expansion
+
+The first search is an initial pass, not a claim of exhaustive research. A live graph can be extended from the toolbar or a specific claim card. Each extension is a new OpenAI web-research pass focused on missing support, refutation, or context; it deduplicates canonical source URLs before merging results.
+
+- Sourceful caps a graph at **four total passes** and **60 source traces**, with a stricter expansion request limit, so BYOK research cannot turn into an unbounded autonomous crawler.
+- For up to 18 not-yet-inspected public source pages per pass, the server safely resolves an Open Graph thumbnail and records links to other *active* source traces. Purple dashed board arcs mean an observed page-to-page link only; they do **not** assert that the link is a scholarly citation or proof.
+- Sources sharing a publisher domain are stored as a provenance cluster and are not counted as independent corroboration merely because they appear more than once.
+
+This is a deliberately bounded foundation for deeper provenance work. A production-grade long-running investigation would still need a persistent job queue, source-content extraction with citation parsing, human review checkpoints, and explicit per-user cost controls.
+
 ## Deploy to Google Cloud Run
 
 The repository includes a production Dockerfile. The app is public, but live research requires either a server environment key or a visitor’s own key through the in-browser vault.

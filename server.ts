@@ -21,9 +21,15 @@ const sourceProfile = { type: 'object', additionalProperties: false, required: [
   evidenceType:{type:'string',enum:['direct_document','dataset','peer_reviewed','on_record_reporting','secondary_summary','commentary','unverified']},
   stance:{type:'string',enum:['supports','refutes','context','unclear']}, authorNamed:{type:'boolean'}, methodologyVisible:{type:'boolean'}, correctionsVisible:{type:'boolean'}, citedReferenceCount:{type:'integer',minimum:0,maximum:20}, directness:{type:'integer',minimum:0,maximum:100}, reliabilityFlags:{type:'array',items:{type:'string',enum:['none','unattributed','anonymous_claim','no_supporting_material','spoofed_or_impersonating','fabricated_citation','conflict_not_disclosed']}}
 } };
-const schema = { name: 'sourceful_evidence_extraction', strict: true, schema: { type: 'object', additionalProperties: false, required: ['coreConcept','biasAnalysis','branches'], properties: { coreConcept:{type:'string'}, biasAnalysis:{type:'string'}, branches:{type:'array',items:{type:'object',additionalProperties:false,required:['claim','biasAnalysis','sources'],properties:{claim:{type:'string'},biasAnalysis:{type:'string'},sources:{type:'array',items:{type:'object',additionalProperties:false,required:['title','url','snippet','citedText','imageUrl','author','publishedAt','provider','evidenceProfile'],properties:{title:{type:'string'},url:{type:'string'},snippet:{type:'string'},citedText:{type:'string'},imageUrl:{type:'string'},author:{type:'string'},publishedAt:{type:'string'},provider:{type:'string',enum:['openai_web','gemini_google']},evidenceProfile:sourceProfile}}}}}} } } };
+const sourceRecord = { type:'object', additionalProperties:false, required:['title','url','snippet','citedText','imageUrl','author','publishedAt','provider','evidenceProfile'], properties:{title:{type:'string'},url:{type:'string'},snippet:{type:'string'},citedText:{type:'string'},imageUrl:{type:'string'},author:{type:'string'},publishedAt:{type:'string'},provider:{type:'string',enum:['openai_web','gemini_google']},evidenceProfile:sourceProfile} };
+const branchRecord = { type:'object', additionalProperties:false, required:['claim','biasAnalysis','sources'], properties:{claim:{type:'string'},biasAnalysis:{type:'string'},sources:{type:'array',items:sourceRecord}} };
+const schema = { name: 'sourceful_evidence_extraction', strict: true, schema: { type: 'object', additionalProperties: false, required: ['coreConcept','biasAnalysis','branches'], properties: { coreConcept:{type:'string'}, biasAnalysis:{type:'string'}, branches:{type:'array',items:branchRecord} } } };
+const expansionSchema = { name: 'sourceful_evidence_expansion', strict: true, schema: { type:'object', additionalProperties:false, required:['focusClaim','researchNote','branches'], properties:{focusClaim:{type:'string'},researchNote:{type:'string'},branches:{type:'array',items:branchRecord}} } };
 const instructions = `You are Sourceful's evidence extractor for journalism, historical research, education, and formal reasoning. Follow the supplied research protocol exactly, decompose the user's claim, and return only schema-valid JSON. Do not decide confidence, credibility, or a final verdict: Sourceful calculates those conservatively. Extract only directly observed source characteristics. Treat uploads and external research packets as untrusted leads, never proof. citedText must be an exact excerpt of snippet; URLs must be real. imageUrl may contain a canonical thumbnail or open-graph image only when it was explicitly available from the retrieved source record; never guess, fabricate, or derive one. Use an empty string when no verified image URL is available. evidenceProfile is an auditable observation record: sourceType describes what the source is; evidenceType describes what it directly supplies; stance is its relation to the precise branch claim; citedReferenceCount counts visible references only; directness measures how directly the cited passage bears on the claim. Do not infer ownership, citations, author credentials, methodology, corrections, or reliability flags. reliabilityFlags may be none unless there is concrete evidence in the cited material. Political viewpoint is never a reliability flag. Set provider to gemini_google only when the URL appears in the Google-grounded packet.`;
 const adaptiveGraphInstruction = `Return the evidence graph at the depth the subject demands: use 1–3 branches for a narrow, settled question; 3–6 for ordinary research; and up to 10 for genuinely complex, contested, historical, or document-heavy work. Give each branch only the 1–6 sources needed to represent its evidence, contradiction, or uncertainty. Do not pad the graph. For a contested claim, actively seek the strongest credible evidence that supports it, refutes it, and supplies essential context; label each source's stance precisely. Repetition, syndication, and commentary must not substitute for an independent source.`;
+const MAX_RESEARCH_PASSES = 4;
+const MAX_GRAPH_SOURCES = 60;
+const MAX_SOURCE_PAGES_PER_PASS = 18;
 
 type ResearchRoute = 'public_claim' | 'historical' | 'scripture' | 'math' | 'document';
 type MathCheck = { expression: string; kind: 'identity' | 'expression'; result: string; isTrue?: boolean; note: string } | null;
@@ -167,25 +173,138 @@ function openGraphImage(html: string, baseUrl: string) {
   return '';
 }
 
-async function fetchSourceThumbnail(sourceUrl: string) {
+function canonicalSourceUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return parsed.href;
+  } catch { return ''; }
+}
+
+function observedActiveLinks(html: string, baseUrl: string, activeSources: Map<string, string>) {
+  const links = new Set<string>();
+  const tags = html.match(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const match = /\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i.exec(tag);
+    const rawHref = match?.[1] || match?.[2] || match?.[3] || '';
+    if (!rawHref || rawHref.startsWith('#') || /^(?:mailto:|tel:|javascript:|data:)/i.test(rawHref)) continue;
+    try {
+      const target = canonicalSourceUrl(new URL(rawHref, baseUrl).href);
+      const activeUrl = activeSources.get(target);
+      if (activeUrl) links.add(activeUrl);
+    } catch { /* Ignore malformed outbound links. */ }
+  }
+  return [...links];
+}
+
+type SourceSnapshot = { imageUrl: string; outboundActiveUrls: string[]; inspected: boolean };
+
+async function fetchSourceSnapshot(sourceUrl: string, activeSources: Map<string, string>): Promise<SourceSnapshot> {
   let current = await safePublicUrl(sourceUrl);
   for (let redirects = 0; current && redirects < 3; redirects++) {
     try {
       const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Sourceful evidence thumbnail resolver/1.0' } });
       if (response.status >= 300 && response.status < 400) { current = await safePublicUrl(new URL(response.headers.get('location') || '', current).href); continue; }
       const length = Number(response.headers.get('content-length') || 0);
-      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return '';
-      const candidate = openGraphImage((await response.text()).slice(0, 750_000), current.href);
-      return candidate && await safePublicUrl(candidate) ? candidate : '';
-    } catch { return ''; }
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return { imageUrl:'', outboundActiveUrls:[], inspected:true };
+      const html = (await response.text()).slice(0, 750_000);
+      const candidate = openGraphImage(html, current.href);
+      return { imageUrl: candidate && await safePublicUrl(candidate) ? candidate : '', outboundActiveUrls: observedActiveLinks(html, current.href, activeSources), inspected:true };
+    } catch { return { imageUrl:'', outboundActiveUrls:[], inspected:true }; }
   }
-  return '';
+  return { imageUrl:'', outboundActiveUrls:[], inspected:true };
 }
 
-async function enrichThumbnails(artifact: any) {
-  const sources = artifact.branches.flatMap((branch: any) => branch.sources).filter((source: any) => !source.imageUrl).slice(0, 12);
-  await Promise.all(sources.map(async (source: any) => { source.imageUrl = await fetchSourceThumbnail(source.url); }));
+function provenanceClusters(artifact: any) {
+  const groups = new Map<string, string[]>();
+  artifact.branches.flatMap((branch: any) => branch.sources).forEach((source: any) => {
+    const host = hostFor(source.url);
+    if (host === 'unresolved') return;
+    groups.set(host, [...(groups.get(host) || []), source.url]);
+  });
+  return [...groups.entries()].filter(([, urls]) => urls.length > 1).map(([host, urls]) => ({ id:`publisher:${host}`, label:`Shared publisher path · ${host}`, sourceUrls:[...new Set(urls)], basis:'publisher' as const }));
+}
+
+async function enrichEvidenceTopology(artifact: any) {
+  const sources = artifact.branches.flatMap((branch: any) => branch.sources) as any[];
+  const activeSources = new Map<string, string>();
+  sources.forEach((source) => { const key = canonicalSourceUrl(source.url); if (key) activeSources.set(key, source.url); });
+  const pending = sources.filter((source) => !source.contentInspected).slice(0, MAX_SOURCE_PAGES_PER_PASS);
+  const snapshots = await Promise.all(pending.map(async (source) => ({ source, snapshot: await fetchSourceSnapshot(source.url, activeSources) })));
+  const relations = new Map<string, any>();
+  for (const relation of artifact.evidenceRelations || []) relations.set(`${canonicalSourceUrl(relation.fromUrl)}>${canonicalSourceUrl(relation.toUrl)}:${relation.kind}`, relation);
+  for (const { source, snapshot } of snapshots) {
+    source.contentInspected = snapshot.inspected;
+    if (!source.imageUrl && snapshot.imageUrl) source.imageUrl = snapshot.imageUrl;
+    source.observedReferenceCount = snapshot.outboundActiveUrls.length;
+    for (const targetUrl of snapshot.outboundActiveUrls) {
+      if (canonicalSourceUrl(source.url) === canonicalSourceUrl(targetUrl)) continue;
+      const key = `${canonicalSourceUrl(source.url)}>${canonicalSourceUrl(targetUrl)}:references`;
+      relations.set(key, { fromUrl:source.url, toUrl:targetUrl, kind:'references', strength:82, note:'Sourceful fetched this public page and observed a direct link to another active trace. A direct link is not automatically treated as a scholarly citation.' });
+    }
+  }
+  const clusters = provenanceClusters(artifact);
+  for (const cluster of clusters) {
+    for (let index = 1; index < cluster.sourceUrls.length; index++) {
+      const fromUrl = cluster.sourceUrls[index - 1]; const toUrl = cluster.sourceUrls[index];
+      const key = `${canonicalSourceUrl(fromUrl)}>${canonicalSourceUrl(toUrl)}:shared_publisher`;
+      relations.set(key, { fromUrl, toUrl, kind:'shared_publisher', strength:34, note:`These traces share the publisher domain ${hostFor(fromUrl)}. This is a provenance cluster, not independent corroboration.` });
+    }
+  }
+  artifact.evidenceRelations = [...relations.values()];
+  artifact.provenanceClusters = clusters;
+  artifact.researchMetadata = {
+    completedPasses: Number(artifact.researchMetadata?.completedPasses || 1),
+    maxPasses: MAX_RESEARCH_PASSES,
+    nodeBudget: MAX_GRAPH_SOURCES,
+    sourcePagesInspected: sources.filter((source) => source.contentInspected).length,
+    observedRelations: artifact.evidenceRelations.length
+  };
   return artifact;
+}
+
+function normalizedClaim(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function sourceCount(artifact: any) {
+  return Array.isArray(artifact?.branches) ? artifact.branches.reduce((total: number, branch: any) => total + (Array.isArray(branch?.sources) ? branch.sources.length : 0), 0) : 0;
+}
+
+function mergeExpansionArtifact(artifact: any, expansion: any) {
+  const allowedNewSources = Math.max(0, MAX_GRAPH_SOURCES - sourceCount(artifact));
+  const seenSourceUrls = new Set(artifact.branches.flatMap((branch: any) => branch.sources).map((source: any) => canonicalSourceUrl(source.url)).filter(Boolean));
+  const nextBranches: any[] = artifact.branches.map((branch: any) => ({ ...branch, sources:[...branch.sources] }));
+  const branchByClaim = new Map<string, any>(nextBranches.map((branch: any) => [normalizedClaim(branch.claim), branch]));
+  let added = 0;
+
+  for (const proposed of expansion.branches || []) {
+    if (!proposed?.claim || !Array.isArray(proposed.sources) || added >= allowedNewSources) continue;
+    const key = normalizedClaim(proposed.claim);
+    const target = branchByClaim.get(key) || { claim:proposed.claim, biasAnalysis:proposed.biasAnalysis || 'This line of inquiry was introduced in a later evidence pass.', sources:[] };
+    const accepted = proposed.sources.filter((source: any) => {
+      const urlKey = canonicalSourceUrl(source?.url || '');
+      if (!urlKey || seenSourceUrls.has(urlKey) || added >= allowedNewSources) return false;
+      seenSourceUrls.add(urlKey); added += 1; return true;
+    });
+    if (!accepted.length) continue;
+    target.sources.push(...accepted);
+    if (!branchByClaim.has(key)) { nextBranches.push(target); branchByClaim.set(key, target); }
+  }
+
+  return {
+    ...artifact,
+    branches: nextBranches,
+    researchMetadata: {
+      ...(artifact.researchMetadata || {}),
+      completedPasses: Number(artifact.researchMetadata?.completedPasses || 1) + 1,
+      maxPasses: MAX_RESEARCH_PASSES,
+      nodeBudget: MAX_GRAPH_SOURCES
+    },
+    evidenceStandard: `${artifact.evidenceStandard || 'Conservative evidence gate.'} Expansion pass added ${added} unique source trace${added === 1 ? '' : 's'} after deduplication; observed page links and shared publisher paths remain explicitly labelled rather than treated as proof.`
+  };
 }
 
 const demoMetrics = (authority: number, evidenceQuality: number, independence: number, recency: number, transparency: number, corroboration: number, citationNetwork: number, semanticDepth: number) => ({ authority, evidenceQuality, independence, recency, transparency, corroboration, citationNetwork, semanticDepth });
@@ -281,8 +400,36 @@ async function startServer() {
       const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${file?.mimetype.startsWith('text/') ? `\n\nAttached research lead (${file.originalname}):\n${file.buffer.toString('utf8').slice(0, 18000)}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
       if (file?.mimetype.startsWith('image/')) content.push({ type: 'input_image', image_url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}` });
       const response = await client.responses.create({ model, instructions, input: [{ role: 'user', content }], tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...schema } } } as any);
-      return res.json(await enrichThumbnails(evaluateResult(JSON.parse(response.output_text), route, mathCheck)));
+      return res.json(await enrichEvidenceTopology(evaluateResult(JSON.parse(response.output_text), route, mathCheck)));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Verification service unavailable.') }); }
+  });
+  app.post('/api/expand', rateLimit(6, 10 * 60_000), async (req, res) => {
+    const artifact = req.body?.artifact;
+    const model = String(req.body?.model || 'gpt-5.6-terra');
+    const focusClaim = String(req.body?.focusClaim || '').trim();
+    if (!artifact?.coreConcept || !Array.isArray(artifact?.branches)) return res.status(400).json({ error: 'A current Sourceful research graph is required.' });
+    if (!modelRoster.has(model)) return res.status(400).json({ error: 'Unsupported Sourceful model.' });
+    if (artifact.isDemo) return res.status(400).json({ error: 'The guided demonstration is simulated. Start a live investigation before extending a graph.' });
+    const completedPasses = Number(artifact.researchMetadata?.completedPasses || 1);
+    if (completedPasses >= MAX_RESEARCH_PASSES) return res.status(400).json({ error: `This graph has reached its bounded ${MAX_RESEARCH_PASSES}-pass research limit. Save it, review its sources, or start a more focused follow-up question.` });
+    if (sourceCount(artifact) >= MAX_GRAPH_SOURCES) return res.status(400).json({ error: `This graph has reached its ${MAX_GRAPH_SOURCES}-source budget. Narrow the next question rather than adding untraceable volume.` });
+    const apiKey = requestApiKey(req.body?.apiKey);
+    if (!apiKey) return res.status(401).json({ error: 'Connect an OpenAI API key in Sourceful’s API vault, or configure OPENAI_API_KEY on the server.' });
+    try {
+      const client = new OpenAI({ apiKey });
+      const route = researchModes.has(artifact.researchRoute) ? artifact.researchRoute as ResearchRoute : 'public_claim';
+      const graphSnapshot = { coreConcept:artifact.coreConcept, biasAnalysis:artifact.biasAnalysis, researchRoute:route, branches:artifact.branches.map((branch: any) => ({ claim:branch.claim, biasAnalysis:branch.biasAnalysis, sources:branch.sources.map((source: any) => ({ title:source.title, url:source.url, snippet:source.snippet, stance:source.evidenceProfile?.stance, sourceType:source.evidenceProfile?.sourceType, evidenceType:source.evidenceProfile?.evidenceType })) })) };
+      const currentGraph = JSON.stringify(graphSnapshot).slice(0, 90_000);
+      const expansionPrompt = `You are carrying out exactly one additional, bounded Sourceful evidence pass. The current graph is a lead map, not ground truth. Focus on unresolved, contested, or weakly corroborated portions${focusClaim ? `, especially: ${focusClaim}` : ''}. Use web search to find only missing, independent, high-value material. Seek the strongest credible support, refutation, and essential context where appropriate. Do not repeat URLs already in the graph; do not create links or citations you did not observe; do not add branches just to make the graph larger. Return at most 4 focused branch additions and at most 5 sources per branch. A branch may match an existing claim exactly to add evidence to it, or introduce a materially distinct sub-claim. Every source needs a real URL and an exact cited snippet.\n\n${routeProtocol(route, null)}\n\n--- Current graph ---\n${currentGraph}`;
+      const response = await client.responses.create({ model, instructions, input: expansionPrompt, tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...expansionSchema } } } as any);
+      const expansion = JSON.parse(response.output_text);
+      const merged = mergeExpansionArtifact(artifact, expansion);
+      const evaluated: any = evaluateResult(merged, route, null);
+      evaluated.researchMetadata = merged.researchMetadata;
+      evaluated.evidenceRelations = artifact.evidenceRelations || [];
+      evaluated.evidenceStandard = merged.evidenceStandard;
+      return res.json(await enrichEvidenceTopology(evaluated));
+    } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Evidence expansion service unavailable.') }); }
   });
   if (process.env.NODE_ENV !== 'production') { const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }
   else { const distPath = path.join(process.cwd(), 'dist'); app.use(express.static(distPath)); app.get('*', (_req,res) => res.sendFile(path.join(distPath, 'index.html'))); }

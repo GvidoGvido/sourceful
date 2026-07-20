@@ -10,11 +10,36 @@ export interface Source {
   author?: string;
   publishedAt?: string;
   citations?: number;
+  /** Links from this fetched page to another active trace. These are observed links, not assumed citations. */
+  observedReferenceCount?: number;
   semanticDepth?: number;
   verificationStatus?: 'checking' | 'verified' | 'contested';
   provider?: 'openai_web' | 'gemini_google';
   evidenceProfile?: EvidenceProfile;
   metrics?: SourceMetrics;
+}
+
+export interface EvidenceRelation {
+  fromUrl: string;
+  toUrl: string;
+  kind: 'references' | 'shared_publisher';
+  strength: number;
+  note: string;
+}
+
+export interface ProvenanceCluster {
+  id: string;
+  label: string;
+  sourceUrls: string[];
+  basis: 'publisher';
+}
+
+export interface ResearchMetadata {
+  completedPasses: number;
+  maxPasses: number;
+  nodeBudget: number;
+  sourcePagesInspected: number;
+  observedRelations: number;
 }
 
 export interface EvidenceProfile {
@@ -56,6 +81,9 @@ export interface VerificationResult {
   biasAnalysis?: string;
   evidenceStandard?: string;
   researchRoute?: 'public_claim' | 'historical' | 'scripture' | 'math' | 'document';
+  evidenceRelations?: EvidenceRelation[];
+  provenanceClusters?: ProvenanceCluster[];
+  researchMetadata?: ResearchMetadata;
   branches: Branch[];
 }
 
