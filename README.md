@@ -5,7 +5,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-d4a64b.svg)
 ![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5.6-412991.svg)
 
-**Live demo:** https://sourceful-knllca53ba-ew.a.run.app
+**Live demo:** https://sourceful-167935310251.europe-west1.run.app
 
 ## What it does
 
