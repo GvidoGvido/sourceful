@@ -285,3 +285,13 @@ body {
 
 /* Extracts are a separate reading surface: scrolling them never pans the 3D field. */
 .cosmic-preview { max-height:clamp(148px,30dvh,240px); overflow-x:hidden; overflow-y:auto; overscroll-behavior-y:contain; scrollbar-gutter:stable; pointer-events:auto; }
+
+/* The information panel doubles as a compact visual legend for first-time readers. */
+.about-read-guide { margin:19px 0 0; padding:14px; border:1px solid rgba(118,173,238,.2); border-radius:12px; background:linear-gradient(135deg,rgba(80,143,214,.09),rgba(194,158,69,.045)); }
+.about-read-guide h3 { margin:0; color:#9cc8ff; font:700 10px var(--font-mono); letter-spacing:.1em; text-transform:uppercase; }
+.about-read-guide ol { display:grid; gap:10px; margin:13px 0 0; padding:0; list-style:none; }
+.about-read-guide li { display:grid; grid-template-columns:74px minmax(0,1fr); gap:8px; align-items:start; color:#b8c2d1; font:11px/1.42 var(--font-sans); }
+.about-read-guide li b { color:#e6c36c; font:700 9px/1.45 var(--font-mono); letter-spacing:.03em; text-transform:uppercase; }
+.dossier-light .about-read-guide { background:linear-gradient(135deg,rgba(69,136,223,.08),rgba(255,248,228,.72)); border-color:rgba(88,137,200,.2); }
+.dossier-light .about-read-guide li { color:#536174; }
+.dossier-light .about-read-guide h3 { color:#3971b5; }

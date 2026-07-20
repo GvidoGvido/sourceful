@@ -15,6 +15,7 @@
 - Adds route-aware metadata discovery from public scholarly, archival, scientific, and official-dataset indexes before the web-research pass, then requires the model to verify original records before treating them as evidence.
 - Routes work intelligently for public claims, history, scripture, maths, and uploaded documents.
 - Builds an explorable 3D discovery graph and a 2D research board with claim and source nodes.
+- Includes a built-in “How to read the graph” legend covering node roles, stance colours, assessment scores, evidence distance, and the selected gold provenance route.
 - Calculates an auditable credibility path for every trace: source quality, exact claim relevance, directness, independence, and bounded compounded contribution.
 - Compounds supporting and refuting paths **separately** per branch, discounting repeated sources that share publisher or observed-reference provenance.
 - Exports claim/source evidence to CSV, saves research artefacts locally, creates briefs, and can dissolve weak traces from the working graph.

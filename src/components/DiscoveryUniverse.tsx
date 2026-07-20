@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Float, Html, Line, OrbitControls, Sparkles } from '@react-three/drei';
+import { Html, Line, OrbitControls, Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
 import { Branch, VerificationResult, Source } from '../types';
 
@@ -27,7 +27,7 @@ function PlasmaSurface({ color, hovered }: { color: string; hovered: boolean }) 
 
 function EnergyAura({ color, size, hovered, selected = false }: { color: string; size: number; hovered: boolean; selected?: boolean }) {
   const texture = useMemo(() => { const canvas = document.createElement('canvas'); canvas.width = canvas.height = 192; const context = canvas.getContext('2d')!; const gradient = context.createRadialGradient(96,96,0,96,96,96); gradient.addColorStop(0, 'rgba(255,255,255,.86)'); gradient.addColorStop(.10, 'rgba(255,255,255,.54)'); gradient.addColorStop(.28, 'rgba(255,255,255,.20)'); gradient.addColorStop(.58, 'rgba(255,255,255,.055)'); gradient.addColorStop(1, 'rgba(255,255,255,0)'); context.fillStyle = gradient; context.fillRect(0,0,192,192); const map = new THREE.CanvasTexture(canvas); map.colorSpace = THREE.SRGBColorSpace; return map; }, []);
-  const group = useRef<THREE.Group>(null); const core = useRef<THREE.Sprite>(null); useFrame((state) => { if (!group.current) return; const pulse = 1 + Math.sin(state.clock.elapsedTime * 1.55 + size) * .07 + (hovered ? .11 : 0) + (selected ? .09 : 0); group.current.scale.setScalar(pulse); if (core.current) { const corePulse = 1 + Math.sin(state.clock.elapsedTime * 2.7 + size * 3) * .13 + (hovered ? .12 : 0) + (selected ? .16 : 0); core.current.scale.set(size * 2.28 * corePulse, size * 2.28 * corePulse, 1); } });
+  const group = useRef<THREE.Group>(null); const core = useRef<THREE.Sprite>(null); useFrame((state) => { if (!group.current) return; const pulse = 1 + Math.sin(state.clock.elapsedTime * 1.12 + size) * .025 + (hovered ? .025 : 0) + (selected ? .05 : 0); group.current.scale.setScalar(pulse); if (core.current) { const corePulse = 1 + Math.sin(state.clock.elapsedTime * 1.8 + size * 3) * .045 + (hovered ? .035 : 0) + (selected ? .075 : 0); core.current.scale.set(size * 2.28 * corePulse, size * 2.28 * corePulse, 1); } });
   return <group ref={group}><sprite raycast={() => undefined} scale={[size * (selected ? 8.8 : 7.1), size * (selected ? 8.8 : 7.1), 1]}><spriteMaterial map={texture} color={selected ? '#f8d47c' : color} transparent opacity={selected ? .72 : hovered ? .48 : .28} depthWrite={false} blending={THREE.AdditiveBlending}/></sprite><sprite raycast={() => undefined} scale={[size * (selected ? 5.85 : 4.65), size * (selected ? 5.85 : 4.65), 1]}><spriteMaterial map={texture} color={selected ? '#f8d47c' : color} transparent opacity={selected ? .68 : hovered ? .47 : .28} depthWrite={false} blending={THREE.AdditiveBlending}/></sprite><sprite ref={core} renderOrder={4} raycast={() => undefined} scale={[size * 2.28, size * 2.28, 1]}><spriteMaterial map={texture} color="#fff6d5" transparent opacity={selected ? .94 : hovered ? .76 : .60} depthTest={false} depthWrite={false} blending={THREE.AdditiveBlending}/></sprite></group>;
 }
 
@@ -78,16 +78,16 @@ function Orb({ nodeId, active, selected = false, lineage = false, labelMode, onF
   const scheduleBlur = () => { cancelBlur(); blurTimer.current = window.setTimeout(() => { setPreviewHovered(false); onFocus(null); document.body.style.cursor = 'auto'; blurTimer.current = null; }, 110); };
   const previewFocused = active || previewHovered;
   const energized = hovered || previewHovered || selected;
-  useFrame((state) => { if (!group.current || !visual.current) return; const appear = THREE.MathUtils.smoothstep((state.clock.elapsedTime - order * .14) / .65, 0, 1); const target = selected ? 1.18 : energized ? 1.1 : 1; if (!disintegrating) { dissolutionStart.current = null; visual.current.scale.setScalar(Math.max(.001, appear * target)); return; } if (dissolutionStart.current === null) dissolutionStart.current = state.clock.elapsedTime; const fade = Math.min((state.clock.elapsedTime - dissolutionStart.current) / .52, 1); visual.current.scale.setScalar(Math.max(.001, appear * target * (1 - fade))); });
+  useFrame((state) => { if (!group.current || !visual.current) return; const appear = THREE.MathUtils.smoothstep((state.clock.elapsedTime - order * .14) / .65, 0, 1); const target = selected ? 1.07 : energized ? 1.025 : 1; if (!disintegrating) { dissolutionStart.current = null; const nextScale = Math.max(.001, appear * target); visual.current.scale.setScalar(THREE.MathUtils.lerp(visual.current.scale.x, nextScale, .16)); return; } if (dissolutionStart.current === null) dissolutionStart.current = state.clock.elapsedTime; const fade = Math.min((state.clock.elapsedTime - dissolutionStart.current) / .52, 1); visual.current.scale.setScalar(Math.max(.001, appear * target * (1 - fade))); });
   // The interactive field follows the visible orb—not its labels or the ambient glow.
   // This makes every sphere reliably targetable without stealing hover from neighbours.
   const hitRadius = size * .96;
   const selectNode = () => { cancelBlur(); setHovered(false); setPreviewHovered(false); onFocus(null); onClick?.(); };
-  return <Float speed={1.3 + size} rotationIntensity={.25} floatIntensity={.7}><group ref={group} position={position}>
+  return <group ref={group} position={position}>
     <group ref={visual}><EnergyAura color={color} size={size} hovered={energized} selected={selected}/>{selected && <SelectionHalo size={size}/>}<mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={selected ? '#ffe39a' : energized ? '#ffe39a' : lineage ? '#f8d47c' : color} intensity={selected ? 10.5 : energized ? 4.9 : lineage ? 2.85 : 2.3} distance={size * (selected ? 10 : 7)}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .42, 0]} style={{ pointerEvents: previewFocused ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} imageUrl={imageUrl} visible={labelMode === 'all' || selected || previewFocused} focused={previewFocused} onPreviewEnter={() => { cancelBlur(); setPreviewHovered(true); onFocus(nodeId); }} onPreviewLeave={() => { setPreviewHovered(false); scheduleBlur(); }}/></Html></group>
     <mesh onPointerOver={(event) => { if (disintegrating) return; event.stopPropagation(); cancelBlur(); setHovered(true); onFocus(nodeId); document.body.style.cursor = 'pointer'; }} onPointerOut={(event) => { event.stopPropagation(); setHovered(false); scheduleBlur(); }} onClick={(event) => { if (disintegrating) return; event.stopPropagation(); selectNode(); }}><sphereGeometry args={[hitRadius, 24, 24]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
     {disintegrating && <MicroNodeBurst color={color} size={size}/>} 
-  </group></Float>;
+  </group>;
 }
 
 function sourceTone(source: Source) {
