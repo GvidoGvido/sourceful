@@ -9,10 +9,10 @@ interface NodeGraphProps {
   isDarkMode: boolean;
   onSourceSelect?: (source: Source) => void;
   onClaimSelect?: (claim: Branch) => void;
-  selectedSourceUrl?: string;
-  selectedClaimText?: string;
-  disintegratingSourceUrl?: string | null;
-  disintegratingClaim?: string | null;
+  selectedSourceId?: string;
+  selectedClaimId?: string;
+  disintegratingSourceId?: string | null;
+  disintegratingClaimId?: string | null;
   onDisintegrationComplete?: () => void;
 }
 
@@ -206,10 +206,10 @@ function MicroNodeBurst({ isDodgy }: { isDodgy: boolean }) {
   return <div className="board-micro-node-burst" aria-hidden="true">{Array.from({ length: 180 }, (_, index) => { const angle = index * 2.399963229728653; const radius = 80 + ((index * 23) % 143); return <motion.i key={index} className={isDodgy ? 'red' : 'blue'} initial={{ opacity: 1, x: 0, y: 0, scale: .9 }} animate={{ opacity: 0, x: Math.cos(angle) * radius, y: Math.sin(angle) * radius + 58, scale: index % 6 === 0 ? 1.25 : .08 }} transition={{ duration: .8 + (index % 9) * .06, ease: 'easeOut' }} />; })}</div>;
 }
 
-export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, selectedSourceUrl, selectedClaimText, disintegratingSourceUrl, disintegratingClaim, onDisintegrationComplete }: NodeGraphProps) {
+export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, selectedSourceId, selectedClaimId, disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete }: NodeGraphProps) {
   const { nodes, edges, bounds } = useMemo(() => generateLayout(data), [data]);
-  const selectedSourceNode = useMemo(() => selectedSourceUrl ? nodes.find((node) => node.type === 'source' && node.data.url === selectedSourceUrl) : undefined, [nodes, selectedSourceUrl]);
-  const selectedClaimNode = useMemo(() => selectedSourceNode ? nodes.find((node) => node.id === selectedSourceNode.branchId) : selectedClaimText ? nodes.find((node) => node.type === 'branch' && node.data.claim === selectedClaimText) : undefined, [nodes, selectedClaimText, selectedSourceNode]);
+  const selectedSourceNode = useMemo(() => selectedSourceId ? nodes.find((node) => node.type === 'source' && node.data.graphId === selectedSourceId) : undefined, [nodes, selectedSourceId]);
+  const selectedClaimNode = useMemo(() => selectedSourceNode ? nodes.find((node) => node.id === selectedSourceNode.branchId) : selectedClaimId ? nodes.find((node) => node.type === 'branch' && node.data.graphId === selectedClaimId) : undefined, [nodes, selectedClaimId, selectedSourceNode]);
   const activeLineage = useMemo(() => {
     const lineage = new Set<string>();
     let current = selectedSourceNode || selectedClaimNode;
@@ -254,7 +254,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
     observer.observe(element); return () => observer.disconnect();
   }, []);
   useEffect(() => { if (boardSize.width && boardSize.height) fitGraph(); }, [data, boardSize.width, boardSize.height]);
-  useEffect(() => { if ((!disintegratingSourceUrl && !disintegratingClaim) || !onDisintegrationComplete) return; const timer = window.setTimeout(onDisintegrationComplete, 1320); return () => window.clearTimeout(timer); }, [disintegratingSourceUrl, disintegratingClaim, onDisintegrationComplete]);
+  useEffect(() => { if ((!disintegratingSourceId && !disintegratingClaimId) || !onDisintegrationComplete) return; const timer = window.setTimeout(onDisintegrationComplete, 1320); return () => window.clearTimeout(timer); }, [disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete]);
   
   return (
     <div ref={boardRef} className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none" onWheel={(event) => { event.preventDefault(); zoomAt(view.zoom * (event.deltaY > 0 ? .84 : 1.18), event.clientX, event.clientY); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest('button, a, input, details, [data-board-control]')) return; pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); event.currentTarget.setPointerCapture(event.pointerId); if (pointersRef.current.size === 2) beginPinch(); else if (pointersRef.current.size === 1) panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y }; }} onPointerMove={(event) => { const pointer = pointersRef.current.get(event.pointerId); if (!pointer) return; pointer.x = event.clientX; pointer.y = event.clientY; const pinch = pinchRef.current; if (pinch && pointersRef.current.size === 2) { const [first, second] = [...pointersRef.current.values()]; const distance = Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)); const centerX = (first.x + second.x) / 2; const centerY = (first.y + second.y) / 2; const zoom = clampZoom(pinch.zoom * (distance / pinch.distance)); const ratio = zoom / pinch.zoom; setView({ x: pinch.localX - (pinch.localX - pinch.viewX) * ratio + centerX - pinch.centerX, y: pinch.localY - (pinch.localY - pinch.viewY) * ratio + centerY - pinch.centerY, zoom }); return; } const pan = panRef.current; if (!pan || pan.pointerId !== event.pointerId) return; setView((current) => ({ ...current, x: pan.viewX + event.clientX - pan.x, y: pan.viewY + event.clientY - pan.y })); }} onPointerUp={(event) => { pointersRef.current.delete(event.pointerId); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); panRef.current = null; pinchRef.current = null; }} onPointerCancel={(event) => { pointersRef.current.delete(event.pointerId); panRef.current = null; pinchRef.current = null; }}>
@@ -335,8 +335,8 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
 
           {/* Nodes */}
           {nodes.map(node => {
-            const isDisintegrating = (node.type === 'source' && node.data.url === disintegratingSourceUrl) || (node.type === 'branch' && node.data.claim === disintegratingClaim);
-            const fadingWithClaim = node.type === 'source' && node.branchData?.claim === disintegratingClaim;
+            const isDisintegrating = (node.type === 'source' && node.data.graphId === disintegratingSourceId) || (node.type === 'branch' && node.data.graphId === disintegratingClaimId);
+            const fadingWithClaim = node.type === 'source' && node.branchData?.graphId === disintegratingClaimId;
             const isSelectedNode = activeLineage.has(node.id);
             return (
             <motion.div

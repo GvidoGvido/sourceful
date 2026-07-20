@@ -42,6 +42,31 @@ function metricTrace(key: string, source: Source, profile?: Source['evidenceProf
 type SavedArtifact = { id: string; title: string; createdAt: string; query: string; model: string; result: VerificationResult; summary?: string };
 const artifactStorageKey = 'sourceful-research-library-v1';
 
+// URLs and claim wording are evidence attributes, not unique graph keys. One source can
+// legitimately inform two branches, so the interactive graph always receives its own IDs.
+function identifyGraph(result: VerificationResult): VerificationResult {
+  const usedBranchIds = new Set<string>();
+  const usedSourceIds = new Set<string>();
+  return {
+    ...result,
+    branches: result.branches.map((branch, branchIndex) => {
+      let branchId = branch.graphId || `branch-${branchIndex}`;
+      if (usedBranchIds.has(branchId)) branchId = `branch-${branchIndex}-${usedBranchIds.size}`;
+      usedBranchIds.add(branchId);
+      return {
+        ...branch,
+        graphId: branchId,
+        sources: branch.sources.map((source, sourceIndex) => {
+          let sourceId = source.graphId || `${branchId}:source-${sourceIndex}`;
+          if (usedSourceIds.has(sourceId)) sourceId = `${branchId}:source-${sourceIndex}-${usedSourceIds.size}`;
+          usedSourceIds.add(sourceId);
+          return { ...source, graphId: sourceId };
+        })
+      };
+    })
+  };
+}
+
 function ApiKeyVault({ isDarkMode, apiKey, onUse, onDisconnect, onClose }: { isDarkMode: boolean; apiKey: string; onUse: (key: string) => void; onDisconnect: () => void; onClose: () => void }) {
   const [stored, setStored] = useState(() => hasRememberedApiKey());
   const [keyInput, setKeyInput] = useState('');
@@ -196,8 +221,8 @@ export default function App() {
   const [summary, setSummary] = useState('');
   const [summarising, setSummarising] = useState(false);
   const [expanding, setExpanding] = useState(false);
-  const [disintegratingSourceUrl, setDisintegratingSourceUrl] = useState<string | null>(null);
-  const [disintegratingClaim, setDisintegratingClaim] = useState<string | null>(null);
+  const [disintegratingSourceId, setDisintegratingSourceId] = useState<string | null>(null);
+  const [disintegratingClaimId, setDisintegratingClaimId] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [keyVaultOpen, setKeyVaultOpen] = useState(false);
   const [apiKey, setApiKey] = useState('');
@@ -249,25 +274,25 @@ export default function App() {
     anchor.href = href; anchor.download = `sourceful-evidence-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
   };
   const closeViewportPanels = () => { setSelectedSource(null); setSelectedClaim(null); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false); setSummary(''); setGuideVisible(false); };
-  const restoreArtifact = (artifact: SavedArtifact) => { setResult(artifact.result); setQuery(artifact.query); setModel(artifact.model); setSelectedSource(null); setSelectedClaim(null); setInfoOpen(false); setKeyVaultOpen(false); setSummary(artifact.summary || ''); setAppState('results'); setLibraryOpen(false); };
+  const restoreArtifact = (artifact: SavedArtifact) => { setResult(identifyGraph(artifact.result)); setQuery(artifact.query); setModel(artifact.model); setSelectedSource(null); setSelectedClaim(null); setInfoOpen(false); setKeyVaultOpen(false); setSummary(artifact.summary || ''); setAppState('results'); setLibraryOpen(false); };
   const selectSource = (source: Source) => { closeViewportPanels(); setSelectedSource(source); };
   const selectClaim = (claim: Branch) => { closeViewportPanels(); setSelectedClaim(claim); };
   const openLibrary = () => { closeViewportPanels(); setLibraryOpen(true); };
   const openInfo = () => { closeViewportPanels(); setInfoOpen(true); };
   const openKeyVault = () => { closeViewportPanels(); setKeyVaultOpen(true); };
   const disintegrateSource = (source: Source) => {
-    if (!result || disintegratingSourceUrl || disintegratingClaim) return;
-    setDisintegratingSourceUrl(source.url);
+    if (!result || disintegratingSourceId || disintegratingClaimId || !source.graphId) return;
+    setDisintegratingSourceId(source.graphId);
     setSelectedSource(null);
   };
   const disintegrateClaim = (claim: Branch) => {
-    if (!result || disintegratingSourceUrl || disintegratingClaim) return;
-    setDisintegratingClaim(claim.claim);
+    if (!result || disintegratingSourceId || disintegratingClaimId || !claim.graphId) return;
+    setDisintegratingClaimId(claim.graphId);
     setSelectedClaim(null);
   };
   const completeSourceDisintegration = () => {
-    if (disintegratingSourceUrl) { const sourceUrl = disintegratingSourceUrl; setResult((current) => current ? { ...current, branches: current.branches.map((branch) => ({ ...branch, sources: branch.sources.filter((candidate) => candidate.url !== sourceUrl) })) } : current); setDisintegratingSourceUrl(null); return; }
-    if (disintegratingClaim) { const claimText = disintegratingClaim; setResult((current) => current ? { ...current, branches: current.branches.filter((branch) => branch.claim !== claimText) } : current); setDisintegratingClaim(null); }
+    if (disintegratingSourceId) { const sourceId = disintegratingSourceId; setResult((current) => current ? { ...current, branches: current.branches.map((branch) => ({ ...branch, sources: branch.sources.filter((candidate) => candidate.graphId !== sourceId) })) } : current); setDisintegratingSourceId(null); return; }
+    if (disintegratingClaimId) { const claimId = disintegratingClaimId; setResult((current) => current ? { ...current, branches: current.branches.filter((branch) => branch.graphId !== claimId) } : current); setDisintegratingClaimId(null); }
   };
   const generateSummary = async () => {
     if (!result || summarising) return;
@@ -295,7 +320,7 @@ export default function App() {
       const response = await fetch('/api/expand', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ artifact:result, model, focusClaim:claim?.claim || '', apiKey }), signal:requestControllerRef.current.signal });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to extend this evidence graph.');
-      setResult(data); setGuideVisible(true); setAppState('results');
+      setResult(identifyGraph(data)); setGuideVisible(true); setAppState('results');
     } catch (err: any) {
       if (err?.name !== 'AbortError') setError(err.message || 'Unable to extend this evidence graph.');
       setAppState('results');
@@ -351,7 +376,7 @@ export default function App() {
       }
 
       const data = await response.json();
-      setResult(data);
+      setResult(identifyGraph(data));
       if (useDemo) setQuery(requestText);
       setSelectedSource(null); setSelectedClaim(null); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false);
       setSummary('');
@@ -376,7 +401,7 @@ export default function App() {
   return (
     <div className="min-h-screen sourceful-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-sans overflow-hidden relative selection:bg-amber-500/30 transition-colors duration-500">
       <WindborneNodes />
-      {result && (appState === 'results' || appState === 'loading') && (viewMode === '3d' ? <DiscoveryUniverse data={result} isDarkMode={isDarkMode} labelMode={labelMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceUrl={selectedSource?.url} selectedClaimText={selectedClaim?.claim} disintegratingSourceUrl={disintegratingSourceUrl} disintegratingClaim={disintegratingClaim} onDisintegrationComplete={completeSourceDisintegration} /> : <NodeGraph data={result} isDarkMode={isDarkMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceUrl={selectedSource?.url} selectedClaimText={selectedClaim?.claim} disintegratingSourceUrl={disintegratingSourceUrl} disintegratingClaim={disintegratingClaim} onDisintegrationComplete={completeSourceDisintegration} />)}
+      {result && (appState === 'results' || appState === 'loading') && (viewMode === '3d' ? <DiscoveryUniverse data={result} isDarkMode={isDarkMode} labelMode={labelMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceId={selectedSource?.graphId} selectedClaimId={selectedClaim?.graphId} disintegratingSourceId={disintegratingSourceId} disintegratingClaimId={disintegratingClaimId} onDisintegrationComplete={completeSourceDisintegration} /> : <NodeGraph data={result} isDarkMode={isDarkMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceId={selectedSource?.graphId} selectedClaimId={selectedClaim?.graphId} disintegratingSourceId={disintegratingSourceId} disintegratingClaimId={disintegratingClaimId} onDisintegrationComplete={completeSourceDisintegration} />)}
       {createPortal(<div className="sourceful-viewport-ui">
         {appState !== 'results' && <div className="utility-controls flex items-center gap-4">
           <button onClick={openLibrary} className={`p-2 transition-colors ${isDarkMode ? 'text-white/50 hover:text-white' : 'text-slate-500 hover:text-slate-800'}`} title="Saved research library"><FolderOpen size={20} /></button>

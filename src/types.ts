@@ -1,4 +1,6 @@
 export interface Source {
+  /** Client-side graph identity. URLs can legitimately occur in more than one claim branch. */
+  graphId?: string;
   title: string;
   url: string;
   snippet: string;
@@ -67,6 +69,8 @@ export interface SourceMetrics {
 }
 
 export interface Branch {
+  /** Client-side graph identity. Claim wording is not guaranteed to be globally unique. */
+  graphId?: string;
   claim: string;
   confidenceScore: number;
   biasAnalysis?: string;
