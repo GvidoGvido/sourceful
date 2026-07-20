@@ -157,6 +157,14 @@ body {
 .source-dossier,.artifact-library,.about-panel,.research-brief-panel,.api-key-vault { overscroll-behavior:contain; }
 .sourceful-viewport-ui .api-key-vault { pointer-events:auto!important; z-index:1200!important; }
 
+/* Briefings are a focused reading mode: the research field remains visible, but deliberately recedes. */
+.sourceful-viewport-ui .research-brief-modal { position:fixed; z-index:1200; inset:0; display:grid; place-items:center; box-sizing:border-box; padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left)); overflow:hidden; pointer-events:auto; background:rgba(3,8,16,.18); }
+.sourceful-viewport-ui .research-brief-modal:before { position:absolute; z-index:-1; inset:0; content:""; background:radial-gradient(circle at 50% 45%,rgba(92,156,255,.12),transparent 48%),rgba(4,9,17,.22); }
+.sourceful-viewport-ui .research-brief-modal .research-brief-panel { position:relative!important; top:auto!important; right:auto!important; bottom:auto!important; left:auto!important; box-sizing:border-box; width:min(720px,calc(100vw - 40px))!important; max-width:720px!important; max-height:min(78dvh,760px)!important; overflow-y:auto!important; overscroll-behavior:contain; padding:clamp(20px,3vw,34px)!important; border:1px solid rgba(110,174,241,.35); border-radius:22px; box-shadow:0 34px 120px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.14),0 0 70px rgba(66,133,226,.12); }
+.sourceful-viewport-ui .research-brief-modal .research-brief-panel p { margin:22px 0 0; white-space:pre-wrap; font:400 clamp(15px,1.5vw,18px)/1.72 var(--font-serif); }
+.research-brief-panel.dossier-light { background:rgba(255,253,246,.84); box-shadow:0 34px 110px rgba(71,76,89,.24),inset 0 1px rgba(255,255,255,.92),0 0 58px rgba(75,137,229,.1); }
+@media (max-width:720px) { .sourceful-viewport-ui .research-brief-modal { align-items:center; padding:16px 12px max(16px,env(safe-area-inset-bottom)); }.sourceful-viewport-ui .research-brief-modal .research-brief-panel { width:calc(100vw - 24px)!important; max-height:min(80dvh,760px)!important; border-radius:18px; } }
+
 /* The research state is an intelligible map being formed, not a generic waiting screen. */
 .research-loading-panel { border:1px solid rgba(109,166,240,.34)!important; background:linear-gradient(135deg,rgba(237,248,255,.48),rgba(255,255,255,.12))!important; box-shadow:0 28px 90px rgba(45,105,177,.18),inset 0 1px 0 rgba(255,255,255,.74)!important; backdrop-filter:blur(30px) saturate(145%)!important; }
 .dark .research-loading-panel { background:linear-gradient(135deg,rgba(12,26,49,.72),rgba(11,17,30,.46))!important; box-shadow:0 28px 90px rgba(0,0,0,.5),inset 0 1px 0 rgba(183,223,255,.13)!important; }
