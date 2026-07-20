@@ -303,6 +303,12 @@ body {
 .cosmic-preview { width:min(250px,32vw); cursor:pointer; }
 @media (max-width:640px) { .universe-label { width:min(178px,46vw); transform:translateY(-50%) translateZ(0); }.cosmic-preview { width:min(172px,46vw); -webkit-overflow-scrolling:touch; scrollbar-width:thin; }.universe-label.focused:after { bottom:-6px; height:5px; } }
 
+/* On the paper-like light field, permanently visible labels need their own dark reading plaque. */
+.light .universe-label.visible { padding:6px 9px; border:1px solid rgba(40,79,125,.46); border-radius:9px; background:linear-gradient(135deg,rgba(7,17,32,.93),rgba(14,30,51,.84)); box-shadow:0 9px 24px rgba(19,43,70,.28),inset 0 1px rgba(220,240,255,.12); color:#f7f4e9; text-shadow:0 1px 7px rgba(0,0,0,.76); backdrop-filter:blur(18px) saturate(125%); }
+.light .universe-label.visible span { color:#f0c96d; }
+.light .universe-label.visible strong { color:#f8fafc; }
+.light .universe-label.passive { background:linear-gradient(135deg,rgba(10,24,42,.88),rgba(22,40,62,.8)); border-color:rgba(66,101,140,.32); box-shadow:0 6px 17px rgba(18,39,64,.18); }
+
 /* Board claim cards stay fixed-size; only their reading copy scrolls. */
 .branch-node-scroll { min-width:0; min-height:0; flex:1 1 auto; overflow-x:hidden; overflow-y:auto; padding-right:5px; overscroll-behavior:contain; touch-action:pan-y; -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(225,183,84,.7) transparent; }
 .branch-node-scroll p { overflow-wrap:anywhere; }

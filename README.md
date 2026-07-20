@@ -5,6 +5,12 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-d4a64b.svg)
 ![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5.6-412991.svg)
 
+## Why Sourceful
+
+**Sourceful turns a question into an evidence map—not just a search-results page.** Each claim is connected to the passages that support, refute, or contextualise it, while the graph exposes provenance overlap, source directness, independence, and bounded evidence contribution.
+
+Its distinction is **explainable uncertainty**: rather than returning a black-box truth label, Sourceful lets a learner, researcher, or journalist inspect the route to a conclusion and distinguish genuine corroboration from repetition or shared origin.
+
 **Live demo:** https://sourceful-167935310251.europe-west1.run.app
 
 **Repository:** https://github.com/GvidoGvido/sourceful
