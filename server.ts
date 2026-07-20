@@ -41,7 +41,15 @@ async function chooseResearchRoute(text: string, requested: string, hasFile: boo
     const response = await client.responses.create({ model, input: `Classify the research method required for this user request. Choose public_claim for contemporary/public factual claims; historical for archives, history, and historiography; scripture for canonical religious texts, translations, and interpretation; math for equations, formal proofs, or quantitative reasoning; document only if the user is asking to analyse an attached document. Do not answer the request.\n\nRequest: ${text.slice(0, 4000)}`, text: { format: { type: 'json_schema', name: 'sourceful_route', strict: true, schema: { type: 'object', additionalProperties: false, required: ['route'], properties: { route: { type: 'string', enum: ['public_claim','historical','scripture','math','document'] } } } } } } as any);
     const route = JSON.parse(response.output_text).route;
     return researchModes.has(route) && route !== 'auto' ? route as ResearchRoute : fallbackResearchRoute(text, requested, hasFile);
-  } catch (error) { console.warn('Route classifier fell back to local heuristic.', error); return fallbackResearchRoute(text, requested, hasFile); }
+  } catch (error: any) {
+    console.warn('Route classifier fell back to local heuristic.', {
+      status: error?.status,
+      type: error?.type,
+      code: error?.code,
+      requestId: error?.requestID || error?.request_id
+    });
+    return fallbackResearchRoute(text, requested, hasFile);
+  }
 }
 
 function checkNumericMath(text: string): MathCheck {
@@ -66,8 +74,9 @@ function requestApiKey(candidate: unknown) {
 }
 
 function safeOpenAiError(error: any, fallback: string) {
-  console.error('OpenAI request failed', { status: error?.status, type: error?.type, code: error?.code, requestId: error?.request_id });
+  console.error('OpenAI request failed', { status: error?.status, type: error?.type, code: error?.code, requestId: error?.requestID || error?.request_id });
   if (error?.status === 401) return 'OpenAI did not accept this API key. Check the key, project access, and account billing.';
+  if (error?.status === 429 && error?.code === 'insufficient_quota') return 'This OpenAI project has no available API credits or quota. Add billing or use a project with available capacity.';
   if (error?.status === 429) return 'OpenAI rate limit reached. Wait a moment or use a project with available capacity.';
   return fallback;
 }
