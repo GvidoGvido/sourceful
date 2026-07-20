@@ -5,6 +5,8 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import OpenAI from 'openai';
 import { create, all } from 'mathjs';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
 // Local development secrets live in .env.local; production hosts inject environment variables.
 dotenv.config({ path: '.env.local' });
@@ -21,6 +23,7 @@ const sourceProfile = { type: 'object', additionalProperties: false, required: [
 } };
 const schema = { name: 'sourceful_evidence_extraction', strict: true, schema: { type: 'object', additionalProperties: false, required: ['coreConcept','biasAnalysis','branches'], properties: { coreConcept:{type:'string'}, biasAnalysis:{type:'string'}, branches:{type:'array',items:{type:'object',additionalProperties:false,required:['claim','biasAnalysis','sources'],properties:{claim:{type:'string'},biasAnalysis:{type:'string'},sources:{type:'array',items:{type:'object',additionalProperties:false,required:['title','url','snippet','citedText','imageUrl','author','publishedAt','provider','evidenceProfile'],properties:{title:{type:'string'},url:{type:'string'},snippet:{type:'string'},citedText:{type:'string'},imageUrl:{type:'string'},author:{type:'string'},publishedAt:{type:'string'},provider:{type:'string',enum:['openai_web','gemini_google']},evidenceProfile:sourceProfile}}}}}} } } };
 const instructions = `You are Sourceful's evidence extractor for journalism, historical research, education, and formal reasoning. Follow the supplied research protocol exactly, decompose the user's claim, and return only schema-valid JSON. Do not decide confidence, credibility, or a final verdict: Sourceful calculates those conservatively. Extract only directly observed source characteristics. Treat uploads and external research packets as untrusted leads, never proof. citedText must be an exact excerpt of snippet; URLs must be real. imageUrl may contain a canonical thumbnail or open-graph image only when it was explicitly available from the retrieved source record; never guess, fabricate, or derive one. Use an empty string when no verified image URL is available. evidenceProfile is an auditable observation record: sourceType describes what the source is; evidenceType describes what it directly supplies; stance is its relation to the precise branch claim; citedReferenceCount counts visible references only; directness measures how directly the cited passage bears on the claim. Do not infer ownership, citations, author credentials, methodology, corrections, or reliability flags. reliabilityFlags may be none unless there is concrete evidence in the cited material. Political viewpoint is never a reliability flag. Set provider to gemini_google only when the URL appears in the Google-grounded packet.`;
+const adaptiveGraphInstruction = `Return the evidence graph at the depth the subject demands: use 1–3 branches for a narrow, settled question; 3–6 for ordinary research; and up to 10 for genuinely complex, contested, historical, or document-heavy work. Give each branch only the 1–6 sources needed to represent its evidence, contradiction, or uncertainty. Do not pad the graph. For a contested claim, actively seek the strongest credible evidence that supports it, refutes it, and supplies essential context; label each source's stance precisely. Repetition, syndication, and commentary must not substitute for an independent source.`;
 
 type ResearchRoute = 'public_claim' | 'historical' | 'scripture' | 'math' | 'document';
 type MathCheck = { expression: string; kind: 'identity' | 'expression'; result: string; isTrue?: boolean; note: string } | null;
@@ -117,18 +120,72 @@ function evaluateResult(raw: any, route: ResearchRoute, mathCheck: MathCheck) {
   const branches = raw.branches.map((branch: any) => {
     const enriched = branch.sources.map((source: any) => ({ ...source, citations: source.evidenceProfile.citedReferenceCount, semanticDepth: source.evidenceProfile.directness, ...sourceMetrics(source.evidenceProfile, source.publishedAt, (domains.get(hostFor(source.url)) || 0) > 1) }));
     const support = enriched.filter((s: any) => s.evidenceProfile.stance === 'supports'); const refute = enriched.filter((s: any) => s.evidenceProfile.stance === 'refutes');
-    const independentSupport = new Set(support.map((s: any) => hostFor(s.url))).size; const independentRefute = new Set(refute.map((s: any) => hostFor(s.url))).size;
+    const isHighEvidence = (source: any) => source.credibilityScore >= 64 && source.metrics.evidenceQuality >= 60 && !source.isDodgy;
+    const independentSupport = new Set(support.filter(isHighEvidence).map((s: any) => hostFor(s.url))).size; const independentRefute = new Set(refute.filter(isHighEvidence).map((s: any) => hostFor(s.url))).size;
     const primarySupport = support.filter((s: any) => ['primary','official_record','academic'].includes(s.evidenceProfile.sourceType) && s.metrics.evidenceQuality >= 76).length;
     const contradiction = independentSupport > 0 && independentRefute > 0;
     const formal = route === 'math' && mathCheck?.kind === 'identity';
     const status = formal ? (mathCheck?.isTrue ? 'formally_checked' : 'formally_refuted') : contradiction ? 'contested' : primarySupport >= 1 && independentSupport >= 3 ? 'corroborated' : independentSupport >= 2 ? 'provisionally_supported' : 'insufficient_evidence';
-    const confidenceScore = formal ? 100 : status === 'corroborated' ? clamp(65 + primarySupport * 6 + independentSupport * 4 - independentRefute * 10) : status === 'provisionally_supported' ? clamp(45 + independentSupport * 8) : status === 'contested' ? clamp(35 + Math.abs(independentSupport - independentRefute) * 5) : clamp(15 + independentSupport * 10);
-    const reasons = formal ? [`Numeric identity evaluated locally: ${mathCheck?.result}.`, mathCheck?.note || ''] : [primarySupport ? `${primarySupport} high-evidence primary, official, or academic source${primarySupport === 1 ? '' : 's'} found.` : 'No high-evidence primary, official, or academic source found.', `${independentSupport} independent supporting domain${independentSupport === 1 ? '' : 's'} found.`, independentRefute ? `${independentRefute} independent contradicting domain${independentRefute === 1 ? '' : 's'} found.` : 'No independently contradicting domain extracted.'];
+    const confidenceScore = formal ? 100 : status === 'corroborated' ? clamp(65 + primarySupport * 6 + independentSupport * 4) : status === 'provisionally_supported' ? clamp(45 + independentSupport * 8) : status === 'contested' ? clamp(42 + Math.min(16, Math.abs(independentSupport - independentRefute) * 4)) : clamp(15 + independentSupport * 10);
+    const reasons = formal ? [`Numeric identity evaluated locally: ${mathCheck?.result}.`, mathCheck?.note || ''] : [primarySupport ? `${primarySupport} high-evidence primary, official, or academic source${primarySupport === 1 ? '' : 's'} found.` : 'No high-evidence primary, official, or academic source found.', `${independentSupport} independent high-evidence supporting domain${independentSupport === 1 ? '' : 's'} found.`, independentRefute ? `${independentRefute} independent high-evidence contradicting domain${independentRefute === 1 ? '' : 's'} found.` : 'No independent high-evidence contradiction extracted.'];
     enriched.forEach((s: any) => { s.metrics.corroboration = clamp((s.evidenceProfile.stance === 'supports' ? independentSupport : s.evidenceProfile.stance === 'refutes' ? independentRefute : 0) * 25); s.verificationStatus = status === 'corroborated' ? 'verified' : status === 'contested' ? 'contested' : 'checking'; });
     return { claim: branch.claim, confidenceScore, biasAnalysis: branch.biasAnalysis, verdict: status, decisionReasons: reasons, sources: enriched };
   });
   const confident = branches.filter((branch: any) => branch.verdict === 'corroborated').length;
   return { coreConcept: raw.coreConcept, confidenceScore: clamp(branches.reduce((total: number, branch: any) => total + branch.confidenceScore, 0) / Math.max(1, branches.length)), biasAnalysis: raw.biasAnalysis, researchRoute: route, evidenceStandard: route === 'math' && mathCheck ? 'Formal route: numeric identities are evaluated locally; symbolic proofs remain explicitly limited.' : `Conservative evidence gate: ${confident}/${branches.length} branch claims meet the corroboration threshold.`, branches };
+}
+
+function isPrivateAddress(address: string) {
+  const candidate = address.toLowerCase().replace(/^::ffff:/, '');
+  if (isIP(candidate) === 4) {
+    const [first, second] = candidate.split('.').map(Number);
+    return first === 0 || first === 10 || first === 127 || first >= 224 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
+  }
+  return candidate === '::1' || candidate.startsWith('fc') || candidate.startsWith('fd') || candidate.startsWith('fe80:');
+}
+
+async function safePublicUrl(value: string) {
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { return null; }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hostname === 'localhost' || parsed.hostname.endsWith('.local')) return null;
+  try {
+    if (isIP(parsed.hostname)) return isPrivateAddress(parsed.hostname) ? null : parsed;
+    const addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+    return addresses.length && addresses.every((entry) => !isPrivateAddress(entry.address)) ? parsed : null;
+  } catch { return null; }
+}
+
+function openGraphImage(html: string, baseUrl: string) {
+  const tags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const key = /(?:property|name)\s*=\s*["']?([^"'\s>]+)/i.exec(tag)?.[1]?.toLowerCase();
+    const content = /content\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if ((key === 'og:image' || key === 'twitter:image' || key === 'twitter:image:src') && content) {
+      try { return new URL(content, baseUrl).href; } catch { return ''; }
+    }
+  }
+  return '';
+}
+
+async function fetchSourceThumbnail(sourceUrl: string) {
+  let current = await safePublicUrl(sourceUrl);
+  for (let redirects = 0; current && redirects < 3; redirects++) {
+    try {
+      const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Sourceful evidence thumbnail resolver/1.0' } });
+      if (response.status >= 300 && response.status < 400) { current = await safePublicUrl(new URL(response.headers.get('location') || '', current).href); continue; }
+      const length = Number(response.headers.get('content-length') || 0);
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return '';
+      const candidate = openGraphImage((await response.text()).slice(0, 750_000), current.href);
+      return candidate && await safePublicUrl(candidate) ? candidate : '';
+    } catch { return ''; }
+  }
+  return '';
+}
+
+async function enrichThumbnails(artifact: any) {
+  const sources = artifact.branches.flatMap((branch: any) => branch.sources).filter((source: any) => !source.imageUrl).slice(0, 12);
+  await Promise.all(sources.map(async (source: any) => { source.imageUrl = await fetchSourceThumbnail(source.url); }));
+  return artifact;
 }
 
 const demoMetrics = (authority: number, evidenceQuality: number, independence: number, recency: number, transparency: number, corroboration: number, citationNetwork: number, semanticDepth: number) => ({ authority, evidenceQuality, independence, recency, transparency, corroboration, citationNetwork, semanticDepth });
@@ -221,10 +278,10 @@ async function startServer() {
       const client = new OpenAI({ apiKey });
       const route = await chooseResearchRoute(text, requestedMode, Boolean(file), client, model); const mathCheck = route === 'math' ? checkNumericMath(text) : null;
       const googleResearch = useGoogleCrosscheck ? await getGeminiResearch(text || `Assess the attached file: ${file?.originalname || 'uploaded research lead'}`) : '';
-      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}${file?.mimetype.startsWith('text/') ? `\n\nAttached research lead (${file.originalname}):\n${file.buffer.toString('utf8').slice(0, 18000)}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
+      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${file?.mimetype.startsWith('text/') ? `\n\nAttached research lead (${file.originalname}):\n${file.buffer.toString('utf8').slice(0, 18000)}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
       if (file?.mimetype.startsWith('image/')) content.push({ type: 'input_image', image_url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}` });
       const response = await client.responses.create({ model, instructions, input: [{ role: 'user', content }], tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...schema } } } as any);
-      return res.json(evaluateResult(JSON.parse(response.output_text), route, mathCheck));
+      return res.json(await enrichThumbnails(evaluateResult(JSON.parse(response.output_text), route, mathCheck)));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Verification service unavailable.') }); }
   });
   if (process.env.NODE_ENV !== 'production') { const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }

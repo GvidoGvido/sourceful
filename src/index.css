@@ -156,6 +156,24 @@ body {
 .discovery-universe canvas { touch-action:none; }
 .source-dossier,.artifact-library,.about-panel,.research-brief-panel,.api-key-vault { overscroll-behavior:contain; }
 .sourceful-viewport-ui .api-key-vault { pointer-events:auto!important; z-index:1200!important; }
+
+/* The research state is an intelligible map being formed, not a generic waiting screen. */
+.research-loading-panel { border:1px solid rgba(109,166,240,.34)!important; background:linear-gradient(135deg,rgba(237,248,255,.48),rgba(255,255,255,.12))!important; box-shadow:0 28px 90px rgba(45,105,177,.18),inset 0 1px 0 rgba(255,255,255,.74)!important; backdrop-filter:blur(30px) saturate(145%)!important; }
+.dark .research-loading-panel { background:linear-gradient(135deg,rgba(12,26,49,.72),rgba(11,17,30,.46))!important; box-shadow:0 28px 90px rgba(0,0,0,.5),inset 0 1px 0 rgba(183,223,255,.13)!important; }
+.research-build-loader { position:relative; display:grid; place-items:center; width:100%; min-height:316px; overflow:hidden; isolation:isolate; }
+.research-build-loader:before { position:absolute; z-index:-1; inset:14% 12%; border-radius:50%; content:""; background:radial-gradient(circle,rgba(69,143,255,.16),rgba(69,143,255,.03) 48%,transparent 72%); filter:blur(10px); }
+.research-build-map { position:absolute; inset:0; width:100%; height:100%; opacity:.9; }
+.research-build-copy { position:relative; z-index:1; display:grid; justify-items:center; gap:8px; max-width:340px; padding:20px; text-align:center; text-shadow:0 1px 12px rgba(255,255,255,.55); }
+.dark .research-build-copy { text-shadow:0 2px 18px rgba(0,0,0,.85); }
+.research-build-beacon { display:grid; place-items:center; width:34px; height:34px; border:1px solid rgba(91,151,246,.42); border-radius:50%; background:rgba(126,184,255,.12); color:#3c7eff; box-shadow:0 0 0 7px rgba(83,143,244,.055),0 0 26px rgba(59,130,246,.22); }
+.dark .research-build-beacon { color:#93c7ff; background:rgba(101,170,255,.13); }
+.research-build-copy > span { color:#3778ef; font:700 9px var(--font-mono); letter-spacing:.17em; }
+.dark .research-build-copy > span { color:#8bbcff; }
+.research-build-copy strong { color:#1d3559; font:600 clamp(15px,1.5vw,20px)/1.25 var(--font-sans); letter-spacing:.02em; }
+.dark .research-build-copy strong { color:#e5eefb; }
+.research-build-copy small { color:#5e6f86; font:500 10px/1.45 var(--font-sans); }
+.dark .research-build-copy small { color:#9aabc0; }
+.research-build-copy .pause-research { margin-top:4px; }
 @media (max-width:720px) {
   .result-toolbar { left:12px!important; right:12px!important; }
   .result-mode-cluster { touch-action:pan-x; overscroll-behavior-x:contain; }
@@ -163,6 +181,8 @@ body {
   .source-dossier,.artifact-library,.about-panel,.research-brief-panel { padding:16px!important; }
   .universe-instruction { bottom:max(68px,calc(env(safe-area-inset-bottom) + 52px)); width:min(340px,calc(100vw - 24px)); text-align:center; line-height:1.38; }
   .board-zoom-controls { right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom)); touch-action:manipulation; }
+  .research-build-loader { min-height:280px; }
+  .research-build-copy { max-width:280px; }
 }
 @media (max-width:420px) {
   .source-dossier,.artifact-library,.about-panel { top:max(104px,calc(env(safe-area-inset-top) + 92px))!important; }

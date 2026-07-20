@@ -78,6 +78,7 @@ const generateLayout = (data: VerificationResult) => {
         endX: sNode.x,
         endY: sNode.y + SOURCE_H / 2,
         isDodgy: source.isDodgy,
+        stance: source.evidenceProfile?.stance,
         animOrder: 1.5 + (bIdx * 0.5) + (sIdx * 0.2)
       });
     });
@@ -212,9 +213,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
           {/* Edges */}
           <svg className="absolute overflow-visible z-0 pointer-events-none" style={{ top: 0, left: 0 }}>
             {edges.map(edge => {
-              const pathColor = isDarkMode 
-                ? (edge.isDodgy ? '#ef4444' : '#3b82f6')
-                : (edge.isDodgy ? '#dc2626' : '#2563eb');
+              const pathColor = edge.isDodgy ? (isDarkMode ? '#ef4444' : '#dc2626') : edge.stance === 'refutes' ? (isDarkMode ? '#fb7185' : '#e11d48') : edge.stance === 'context' ? (isDarkMode ? '#fbbf24' : '#d97706') : edge.stance === 'supports' ? (isDarkMode ? '#5ee3ae' : '#059669') : (isDarkMode ? '#60a5fa' : '#2563eb');
                 
               return (
                 <g key={edge.id}>
@@ -360,6 +359,11 @@ function BranchNode({ data, isDarkMode, onSelect }: { data: Branch, isDarkMode: 
 
 function SourceNode({ source, isDarkMode, onSelect }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void }) {
   const isDodgy = source.isDodgy;
+  const stance = source.evidenceProfile?.stance || 'unclear';
+  const stanceLabel = stance === 'supports' ? 'Supports claim' : stance === 'refutes' ? 'Refutes claim' : stance === 'context' ? 'Adds context' : 'Relation unclear';
+  const accent = isDodgy ? 'red' : stance === 'refutes' ? 'rose' : stance === 'context' ? 'amber' : stance === 'supports' ? 'emerald' : 'blue';
+  const accentStyle = accent === 'red' ? 'bg-red-500 text-red-500' : accent === 'rose' ? 'bg-rose-400 text-rose-400' : accent === 'amber' ? 'bg-amber-400 text-amber-400' : accent === 'emerald' ? 'bg-emerald-400 text-emerald-400' : 'bg-blue-500 text-blue-500';
+  const badgeStyle = accent === 'red' ? 'bg-red-500/90' : accent === 'rose' ? 'bg-rose-500/90' : accent === 'amber' ? 'bg-amber-500/90' : accent === 'emerald' ? 'bg-emerald-500/90' : 'bg-blue-500/90';
   
   return (
     <button onClick={() => onSelect?.(source)} className={cn(
@@ -372,7 +376,7 @@ function SourceNode({ source, isDarkMode, onSelect }: { source: Source, isDarkMo
       {/* Glowing Edge Indicator */}
       <div className={cn(
         "absolute left-0 top-0 bottom-0 w-1 shadow-[0_0_20px_2px_currentColor]",
-        isDodgy ? "bg-red-500 text-red-500" : "bg-blue-500 text-blue-500"
+        accentStyle
       )} />
 
       {/* Header Image or Gradient */}
@@ -383,20 +387,21 @@ function SourceNode({ source, isDarkMode, onSelect }: { source: Source, isDarkMo
             <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent" />
           </>
         ) : (
-          <div className={cn("w-full h-full bg-gradient-to-br", isDodgy ? "from-red-900/40 to-slate-900" : "from-blue-900/40 to-slate-900")} />
+          <div className={cn("w-full h-full bg-gradient-to-br", accent === 'red' || accent === 'rose' ? "from-rose-900/40 to-slate-900" : accent === 'amber' ? "from-amber-900/40 to-slate-900" : accent === 'emerald' ? "from-emerald-900/40 to-slate-900" : "from-blue-900/40 to-slate-900")} />
         )}
         
-        {/* Credibility Badge */}
-        <div className="absolute top-4 right-4 flex items-center gap-2">
+        {/* Relation and quality are intentionally separate: neither is a verdict on the claim. */}
+        <div className="absolute top-4 right-4 flex flex-wrap justify-end gap-2">
           {isDodgy ? (
             <div className="bg-red-500/90 text-white px-3 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase flex items-center gap-1 shadow-lg backdrop-blur-md">
-              <ShieldAlert size={14} /> Dodgy Source
+              <ShieldAlert size={14} /> High risk
             </div>
           ) : (
-             <div className="bg-emerald-500/90 text-white px-3 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase flex items-center gap-1 shadow-lg backdrop-blur-md">
-              <ShieldCheck size={14} /> Verified {source.credibilityScore}%
+             <div className={cn("text-white px-3 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase flex items-center gap-1 shadow-lg backdrop-blur-md", badgeStyle)}>
+              <ShieldCheck size={14} /> {stanceLabel}
             </div>
           )}
+          <div className="bg-slate-950/70 text-white px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Evidence {source.credibilityScore ?? '—'}</div>
         </div>
       </div>
 

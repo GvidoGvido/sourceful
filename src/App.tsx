@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Loader2, ArrowRight, ShieldAlert, Lock, Sun, Moon, FolderOpen, Info, X, Quote, Network, BookOpenCheck, CircleCheck, Box, PanelsTopLeft, ScanSearch, Save, Sparkles, Trash2, Atom, SlidersHorizontal, ChevronDown, MousePointer2, Download, Tags } from 'lucide-react';
+import { Search, ArrowRight, ShieldAlert, Lock, Sun, Moon, FolderOpen, Info, X, Quote, Network, BookOpenCheck, CircleCheck, Box, PanelsTopLeft, ScanSearch, Save, Sparkles, Trash2, Atom, SlidersHorizontal, ChevronDown, MousePointer2, Download, Tags } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AppState, Branch, VerificationResult, Source } from './types';
 import { NodeGraph } from './components/NodeGraph';
@@ -83,6 +83,13 @@ function WindborneNodes() {
     driftX: 26 + (index % 9) * 11, driftY: -18 + (index % 7) * 9, duration: 12 + (index % 12) * 2.1, delay: -(index % 10) * 1.3, accent: index % 13 === 0
   })), []);
   return <div className="windborne-nodes" aria-hidden="true">{nodes.map((node) => <motion.i key={node.id} className={node.accent ? 'accent' : ''} style={{ left: `${node.left}%`, top: `${node.top}%`, width: node.size, height: node.size }} animate={{ x: [0, node.driftX, node.driftX * .38, -node.driftX * .22, 0], y: [0, node.driftY, node.driftY * 1.6, node.driftY * .35, 0], opacity: [.18, .9, .42, .72, .18], scale: [1, 1.35, .72, 1.1, 1] }} transition={{ duration: node.duration, delay: node.delay, repeat: Infinity, ease: 'easeInOut' }} />)}</div>;
+}
+
+const researchMapPaths = ['M50 152 C108 145 132 120 182 95 S270 70 328 48','M50 152 C114 160 143 190 194 202 S278 221 352 228','M50 152 C105 132 116 75 150 48 S216 38 260 28','M182 95 C195 123 212 142 244 157 S306 166 356 140','M194 202 C221 183 254 182 278 196 S319 214 366 202','M150 48 C155 73 176 83 202 81 S238 70 270 64','M244 157 C253 132 282 112 305 101 S342 84 370 68','M278 196 C291 172 324 165 348 166 S381 177 396 190','M328 48 C347 62 364 77 389 82'];
+const researchMapNodes = [[50,152],[182,95],[194,202],[150,48],[244,157],[278,196],[328,48],[352,228],[370,68],[396,190]];
+
+function ResearchBuildLoader({ isDarkMode, stage, onCancel }: { isDarkMode: boolean; stage: string; onCancel: () => void }) {
+  return <div className="research-build-loader"><svg className="research-build-map" viewBox="0 0 440 260" aria-hidden="true"><defs><linearGradient id="research-trace" x1="0" x2="1"><stop stopColor={isDarkMode ? '#5da9ff' : '#2e70ed'} stopOpacity=".16"/><stop offset=".5" stopColor={isDarkMode ? '#9ce5ff' : '#316ee8'} stopOpacity=".96"/><stop offset="1" stopColor={isDarkMode ? '#e5bd67' : '#bd8623'} stopOpacity=".4"/></linearGradient><filter id="research-glow"><feGaussianBlur stdDeviation="2.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>{researchMapPaths.map((path, index) => <motion.path key={path} d={path} fill="none" stroke="url(#research-trace)" strokeWidth={index % 3 === 0 ? 1.8 : 1.15} strokeLinecap="round" filter="url(#research-glow)" initial={{ pathLength: 0, opacity: 0 }} animate={{ pathLength: [0, 1, 1], opacity: [0, .92, .45] }} transition={{ duration: 1.25, delay: index * .18, repeat: Infinity, repeatDelay: 2.8, ease: 'easeInOut' }}/>) }{researchMapNodes.map(([cx, cy], index) => <motion.circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={index === 0 ? 5 : index % 3 === 0 ? 3.4 : 2.25} fill={index === 0 ? '#f0c868' : '#70b5ff'} initial={{ opacity: 0, scale: .25 }} animate={{ opacity: [0, 1, .55, 1], scale: [.25, 1, 1.42, 1] }} transition={{ duration: 1.35, delay: .3 + index * .17, repeat: Infinity, repeatDelay: 2.8, ease: 'easeInOut' }}/>)}</svg><div className="research-build-copy"><motion.div className="research-build-beacon" animate={{ scale: [1, 1.22, 1], opacity: [.62, 1, .62] }} transition={{ duration: 1.5, repeat: Infinity }}><Sparkles size={16}/></motion.div><span>LIVE EVIDENCE MAP</span><strong>{stage}</strong><small>Tracing independent leads, contradictions, and provenance.</small><button onClick={onCancel} className="pause-research">Stop &amp; keep completed graph</button></div></div>;
 }
 
 type MenuOption = { value: string; label: string };
@@ -328,7 +335,7 @@ export default function App() {
           animate={{
             width: isCenter ? '100%' : 320,
             maxWidth: isCenter ? '62rem' : 320,
-            minHeight: isCenter ? (configOpen ? 236 : 154) : 100,
+            minHeight: isCenter ? (appState === 'loading' ? 318 : configOpen ? 236 : 154) : 100,
             y: isCenter ? 0 : -350, // Move out of the way to top in results
             borderRadius: isCenter ? 32 : 24,
           }}
@@ -337,7 +344,7 @@ export default function App() {
             "relative flex flex-col items-center justify-center shadow-2xl transition-all duration-500 pointer-events-auto",
             appState === 'idle' && configOpen ? "overflow-visible" : "overflow-hidden",
             appState === 'encrypting' ? "shadow-[0_0_40px_rgba(74,222,128,0.3)]" : "",
-            appState === 'loading' ? "shadow-[0_0_40px_rgba(59,130,246,0.3)]" : ""
+            appState === 'loading' ? "research-loading-panel shadow-[0_0_40px_rgba(59,130,246,0.3)]" : ""
           )}
           style={{
             transformStyle: 'preserve-3d',
@@ -388,12 +395,7 @@ export default function App() {
             </div>
           )}
 
-          {appState === 'loading' && (
-            <div className="flex flex-col items-center justify-center space-y-4">
-              <Loader2 className={`animate-spin ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`} size={32} />
-              <span className={`text-sm font-medium tracking-widest uppercase ${isDarkMode ? 'text-blue-400/80' : 'text-blue-600/80'}`}>{researchStage}</span><button onClick={cancelResearch} className="pause-research">Stop &amp; keep completed graph</button>
-            </div>
-          )}
+          {appState === 'loading' && <ResearchBuildLoader isDarkMode={isDarkMode} stage={researchStage} onCancel={cancelResearch}/>}
 
           </div>
         </motion.div>}
