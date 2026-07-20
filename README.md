@@ -135,8 +135,6 @@ Key safety: keys are not persisted or logged by the server. “Remember key” i
 
 ## OpenAI Build Week
 
-**Suggested track:** Education — Sourceful teaches researchers to distinguish original evidence, independent corroboration, counterevidence, and unsupported repetition.
-
 ### How GPT-5.6 powers Sourceful
 
 GPT-5.6 is the reasoning layer behind each live research pass. Through the OpenAI Responses API, it:
@@ -162,9 +160,6 @@ Codex was used throughout the end-to-end implementation and refinement of Source
 
 This is not a claim that the model independently produced reliable verdicts. Codex accelerated implementation decisions, testing, and visual/interaction iteration; GPT-5.6 performs bounded retrieval and structured analysis within Sourceful's explicit evidence model.
 
-### Submission checklist
-
-For a submission, pair this repository and the public deployment URL with a public demo under three minutes that shows a live BYOK investigation, an evidence path/dossier, and the distinction between supporting and refuting provenance paths. Explain in the narration how Codex accelerated the build and how GPT-5.6 is used in the live workflow. Add the required `/feedback` session ID in Devpost rather than committing it to the repository.
 
 ## Validation
 
