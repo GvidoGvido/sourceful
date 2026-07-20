@@ -57,7 +57,7 @@ function MicroNodeBurst({ color, size }: { color: string; size: number }) {
   return <group ref={group}>{particles.map((particle, index) => <mesh key={index}><icosahedronGeometry args={[particle.scale, 1]}/><meshBasicMaterial color={color} transparent opacity={.95} depthWrite={false} blending={THREE.AdditiveBlending}/></mesh>)}</group>;
 }
 
-function Orb({ nodeId, active, selected = false, labelMode, onFocus, position, color, size, label, detail, preview, citedText, onClick, order = 0, disintegrating = false, onDisintegrationComplete }: { nodeId: string; active: boolean; selected?: boolean; labelMode: 'hover' | 'all'; onFocus: (id: string | null) => void; position: [number,number,number]; color: string; size: number; label: string; detail: string; preview?: string; citedText?: string; onClick?: () => void; order?: number; disintegrating?: boolean; onDisintegrationComplete?: () => void }) {
+function Orb({ nodeId, active, selected = false, suppressPreview = false, labelMode, onFocus, position, color, size, label, detail, preview, citedText, onClick, order = 0, disintegrating = false, onDisintegrationComplete }: { nodeId: string; active: boolean; selected?: boolean; suppressPreview?: boolean; labelMode: 'hover' | 'all'; onFocus: (id: string | null) => void; position: [number,number,number]; color: string; size: number; label: string; detail: string; preview?: string; citedText?: string; onClick?: () => void; order?: number; disintegrating?: boolean; onDisintegrationComplete?: () => void }) {
   const [hovered, setHovered] = useState(false); const group = useRef<THREE.Group>(null); const visual = useRef<THREE.Group>(null); const dissolutionStart = useRef<number | null>(null);
   useEffect(() => { if (!disintegrating || !onDisintegrationComplete) return; const timer = window.setTimeout(onDisintegrationComplete, 1320); return () => window.clearTimeout(timer); }, [disintegrating, onDisintegrationComplete]);
   const energized = hovered || selected;
@@ -65,9 +65,10 @@ function Orb({ nodeId, active, selected = false, labelMode, onFocus, position, c
   // The interactive field follows the visible orb—not its labels or the ambient glow.
   // This makes every sphere reliably targetable without stealing hover from neighbours.
   const hitRadius = size * .96;
+  const selectNode = () => { setHovered(false); onFocus(null); onClick?.(); };
   return <Float speed={1.3 + size} rotationIntensity={.25} floatIntensity={.7}><group ref={group} position={position}>
-    <group ref={visual}><EnergyAura color={color} size={size} hovered={energized}/><mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={energized ? '#ffe39a' : color} intensity={energized ? 4.9 : 2.3} distance={size * 7}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .42, 0]} style={{ pointerEvents: (active || selected) ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} visible={labelMode === 'all' || active || selected} focused={active || selected} onPreviewFocus={() => onFocus(nodeId)} onPreviewBlur={() => { if (!selected) onFocus(null); }} onPreviewSelect={onClick}/></Html></group>
-    <mesh onPointerOver={(event) => { if (disintegrating) return; event.stopPropagation(); setHovered(true); onFocus(nodeId); document.body.style.cursor = 'pointer'; }} onPointerOut={(event) => { event.stopPropagation(); setHovered(false); onFocus(null); document.body.style.cursor = 'auto'; }} onClick={(event) => { if (disintegrating) return; event.stopPropagation(); onClick?.(); }}><sphereGeometry args={[hitRadius, 24, 24]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
+    <group ref={visual}><EnergyAura color={color} size={size} hovered={energized}/><mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={energized ? '#ffe39a' : color} intensity={energized ? 4.9 : 2.3} distance={size * 7}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .42, 0]} style={{ pointerEvents: active && !suppressPreview ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} visible={labelMode === 'all' || selected || (active && !suppressPreview)} focused={active && !suppressPreview} onPreviewFocus={() => onFocus(nodeId)} onPreviewBlur={() => { if (!selected) onFocus(null); }} onPreviewSelect={selectNode}/></Html></group>
+    <mesh onPointerOver={(event) => { if (disintegrating) return; event.stopPropagation(); setHovered(true); onFocus(nodeId); document.body.style.cursor = 'pointer'; }} onPointerOut={(event) => { event.stopPropagation(); setHovered(false); onFocus(null); document.body.style.cursor = 'auto'; }} onClick={(event) => { if (disintegrating) return; event.stopPropagation(); selectNode(); }}><sphereGeometry args={[hitRadius, 24, 24]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
     {disintegrating && <MicroNodeBurst color={color} size={size}/>} 
   </group></Float>;
 }
@@ -87,16 +88,32 @@ function claimTone(branch: Branch) {
   return '#d8a24b';
 }
 
+function branchEvidenceDistance(branch: Branch) {
+  const sources = branch.sources;
+  const average = (values: number[], fallback: number) => values.length ? values.reduce((total, value) => total + value, 0) / values.length : fallback;
+  const credibility = average(sources.map((source) => source.credibilityScore ?? 50), 40);
+  const directness = average(sources.map((source) => source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45), 40);
+  const evidenceQuality = average(sources.map((source) => source.metrics?.evidenceQuality ?? 45), 40);
+  const sourceStrength = credibility * .5 + directness * .28 + evidenceQuality * .22;
+  const combinedStrength = branch.confidenceScore * .56 + sourceStrength * .44;
+  const verdictPenalty: Record<string, number> = { corroborated: -.28, formally_checked: -.28, provisionally_supported: .42, contested: 1.05, insufficient_evidence: 1.72, formally_refuted: 1.56 };
+  const hasContradiction = sources.some((source) => source.evidenceProfile?.stance === 'supports') && sources.some((source) => source.evidenceProfile?.stance === 'refutes');
+  return 3.35 + (100 - combinedStrength) * .055 + (verdictPenalty[branch.verdict || ''] || .72) + (hasContradiction ? .25 : 0);
+}
+
 export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect, onClaimSelect, selectedSourceId, selectedClaimId, disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete }: Props) {
   const branches = data.branches;
   const [activeNode, setActiveNode] = useState<string | null>(null);
   const selectedBranchIndex = useMemo(() => selectedSourceId ? branches.findIndex((branch) => branch.sources.some((source) => source.graphId === selectedSourceId)) : selectedClaimId ? branches.findIndex((branch) => branch.graphId === selectedClaimId) : -1, [branches, selectedClaimId, selectedSourceId]);
   const totalSources = branches.reduce((total, branch) => total + branch.sources.length, 0);
-  const orbitRadius = Math.min(7.2, 3.35 + branches.length * .28 + Math.max(0, totalSources - 12) * .035);
-  const points = useMemo(() => branches.map((branch, index) => { const angle = (index / Math.max(branches.length, 1)) * Math.PI * 2 - Math.PI / 2; const radius = orbitRadius + (100 - branch.confidenceScore) * .012; return [Math.cos(angle) * radius, Math.sin(angle) * radius * .68, index % 2 ? -.68 : .54] as [number,number,number]; }), [branches, orbitRadius]);
-  const cameraDistance = Math.max(10, orbitRadius * 1.95);
-  return <div className="discovery-universe"><Canvas onPointerMissed={() => setActiveNode(null)} dpr={[1, 2]} camera={{ position: [0, 0, cameraDistance], fov: 45 }} gl={{ antialias:true, alpha:true }} style={{ touchAction: 'none' }}><color attach="background" args={[isDarkMode ? '#090d13' : '#f6f4ef']}/><fog attach="fog" args={[isDarkMode ? '#090d13' : '#f6f4ef', orbitRadius + 4, orbitRadius * 3.3]}/><ambientLight intensity={.34}/><pointLight position={[0, 1, 4]} intensity={42} color="#d9ad50"/><pointLight position={[-4, -3, 3]} intensity={19} color="#5ca4d5"/><pointLight position={[4, 2, -3]} intensity={12} color="#77c5a0"/><Sparkles count={Math.min(540, 280 + totalSources * 7)} scale={[orbitRadius * 3.1,orbitRadius * 1.9,9]} size={1.65} speed={.25} color={isDarkMode ? '#ead083' : '#a67b24'}/>
-    <Orb nodeId="core" active={activeNode === 'core'} selected={selectedBranchIndex >= 0} labelMode={labelMode} onFocus={setActiveNode} position={[0,0,0]} color="#d4a64b" size={1.08} label="CORE QUESTION" detail={data.coreConcept} preview={data.biasAnalysis} order={0}/>
+  const branchDistances = useMemo(() => branches.map(branchEvidenceDistance), [branches]);
+  const outerRadius = Math.max(3.5, ...branchDistances);
+  const sceneRadius = outerRadius + 3.25;
+  const points = useMemo(() => branches.map((branch, index) => { const angle = (index / Math.max(branches.length, 1)) * Math.PI * 2 - Math.PI / 2; const radius = branchDistances[index]; return [Math.cos(angle) * radius, Math.sin(angle) * radius * .68, index % 2 ? -.68 : .54] as [number,number,number]; }), [branches, branchDistances]);
+  const cameraDistance = Math.max(10.5, sceneRadius * 2.05);
+  const hasOpenDossier = Boolean(selectedSourceId || selectedClaimId);
+  return <div className="discovery-universe"><Canvas onPointerMissed={() => setActiveNode(null)} dpr={[1, 2]} camera={{ position: [0, 0, cameraDistance], fov: 45 }} gl={{ antialias:true, alpha:true }} style={{ touchAction: 'none' }}><color attach="background" args={[isDarkMode ? '#090d13' : '#f6f4ef']}/><fog attach="fog" args={[isDarkMode ? '#090d13' : '#f6f4ef', sceneRadius + 4, sceneRadius * 3.25]}/><ambientLight intensity={.34}/><pointLight position={[0, 1, 4]} intensity={42} color="#d9ad50"/><pointLight position={[-4, -3, 3]} intensity={19} color="#5ca4d5"/><pointLight position={[4, 2, -3]} intensity={12} color="#77c5a0"/><Sparkles count={Math.min(540, 280 + totalSources * 7)} scale={[sceneRadius * 3.1,sceneRadius * 1.9,9]} size={1.65} speed={.25} color={isDarkMode ? '#ead083' : '#a67b24'}/>
+    <Orb nodeId="core" active={activeNode === 'core'} selected={selectedBranchIndex >= 0} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={[0,0,0]} color="#d4a64b" size={1.08} label="CORE QUESTION" detail={data.coreConcept} preview={data.biasAnalysis} order={0}/>
     {branches.map((branch, index) => {
       const branchColor = claimTone(branch);
       const isSelectedBranch = index === selectedBranchIndex;
@@ -105,14 +122,14 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
         {isSelectedBranch ? <Line points={[[0, 0, 0], points[index]]} color="#ffe29a" lineWidth={4.8} transparent opacity={.44}/> : null}
         <Line points={[[0, 0, 0], points[index]]} color={isSelectedBranch ? '#ffe29a' : branchColor} lineWidth={isSelectedBranch ? 2.2 : 1.15} transparent opacity={isSelectedBranch ? .96 : .58}/>
         <Pulse start={[0, 0, 0]} end={points[index]} color={branchColor} delay={index * .15} active={isSelectedBranch}/>
-        <Orb nodeId={branchNodeId} active={activeNode === branchNodeId} selected={isSelectedBranch} labelMode={labelMode} onFocus={setActiveNode} position={points[index]} color={branchColor} size={.52} label={`${branch.verdict?.replaceAll('_', ' ') || 'CLAIM'} · ${String(index + 1).padStart(2, '0')}`} detail={branch.claim} preview={branch.biasAnalysis} onClick={() => onClaimSelect?.(branch)} order={index + 1} disintegrating={disintegratingClaimId === branch.graphId} onDisintegrationComplete={disintegratingClaimId === branch.graphId ? onDisintegrationComplete : undefined}/>
+        <Orb nodeId={branchNodeId} active={activeNode === branchNodeId} selected={isSelectedBranch} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={points[index]} color={branchColor} size={.52} label={`${branch.verdict?.replaceAll('_', ' ') || 'CLAIM'} · ${String(index + 1).padStart(2, '0')}`} detail={branch.claim} preview={branch.biasAnalysis} onClick={() => onClaimSelect?.(branch)} order={index + 1} disintegrating={disintegratingClaimId === branch.graphId} onDisintegrationComplete={disintegratingClaimId === branch.graphId ? onDisintegrationComplete : undefined}/>
         {branch.sources.map((source, sourceIndex) => {
           const credibility = source.credibilityScore ?? 50;
           const sourceCount = branch.sources.length;
           const branchAngle = (index / Math.max(branches.length, 1)) * Math.PI * 2 - Math.PI / 2;
           const spread = Math.min(.78, Math.PI / Math.max(3, sourceCount + 1));
           const sourceAngle = branchAngle + (sourceIndex - (sourceCount - 1) / 2) * spread;
-          const distance = .92 + (100 - credibility) * .013 + Math.max(0, sourceCount - 3) * .08;
+          const distance = .68 + (100 - credibility) * .021 + Math.max(0, sourceCount - 3) * .11 + (source.isDodgy ? .34 : 0);
           const sourcePos: [number, number, number] = [points[index][0] + Math.cos(sourceAngle) * distance, points[index][1] + Math.sin(sourceAngle) * distance, points[index][2] - .82 + (sourceIndex % 2) * .22];
           const color = sourceTone(source);
           const isDisintegrating = disintegratingSourceId === source.graphId;
@@ -123,11 +140,11 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
             {isSelectedSource && <Line points={[points[index], sourcePos]} color="#ffe29a" lineWidth={3.8} transparent opacity={.46}/>}
             <Line points={[points[index], sourcePos]} color={isSelectedSource ? '#ffe29a' : color} lineWidth={isSelectedSource ? 1.65 : .72} transparent opacity={isSelectedSource ? .96 : .55}/>
             <Pulse start={points[index]} end={sourcePos} color={color} delay={index * .12 + sourceIndex * .09} active={isSelectedSource}/>
-            <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} labelMode={labelMode} onFocus={setActiveNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003)} label={stance === 'refutes' ? 'REFUTING TRACE' : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'} detail={source.title} preview={source.snippet} citedText={source.citedText} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
+            <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003)} label={stance === 'refutes' ? 'REFUTING TRACE' : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'} detail={source.title} preview={source.snippet} citedText={source.citedText} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
           </React.Fragment>;
         })}
       </React.Fragment>;
     })}
-    <OrbitControls enablePan minDistance={Math.max(6.5, orbitRadius * .95)} maxDistance={Math.max(15, orbitRadius * 3.5)} autoRotate autoRotateSpeed={.22} enableDamping dampingFactor={.06}/>
-  </Canvas><div className="universe-instruction">Teal supports · rose refutes · gold adds context · red marks source risk. Distance reflects confidence and source quality; node count grows with the research returned.</div></div>;
+    <OrbitControls enablePan minDistance={Math.max(6.5, sceneRadius * .92)} maxDistance={Math.max(15, sceneRadius * 3.5)} autoRotate autoRotateSpeed={.22} enableDamping dampingFactor={.06}/>
+  </Canvas><div className="universe-instruction">Closer claims have stronger, more direct evidence · distant claims are unresolved or weak · source distance reflects trace quality.</div></div>;
 }
