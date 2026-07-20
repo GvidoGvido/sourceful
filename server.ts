@@ -412,6 +412,87 @@ function citationProvenanceClusters(artifact: any) {
     .map(([fingerprint, urls]) => ({ id:`citation:${fingerprint}`, label:`Shared cited reference · ${fingerprint.replace(/^(?:doi:|url:)/, '').slice(0, 92)}`, sourceUrls:urls, basis:'cited_reference' as const }));
 }
 
+function provenanceComponents(sources: any[], clusters: any[]) {
+  const parent = new Map<string, string>();
+  const find = (value: string): string => { const current = parent.get(value) || value; if (current === value) return current; const root = find(current); parent.set(value, root); return root; };
+  const join = (left: string, right: string) => { const a = find(left); const b = find(right); if (a !== b) parent.set(b, a); };
+  sources.forEach((source) => { const key = canonicalSourceUrl(source.url); if (key) parent.set(key, key); });
+  clusters.forEach((cluster) => {
+    const keys = (cluster.sourceUrls || []).map(canonicalSourceUrl).filter(Boolean);
+    keys.slice(1).forEach((key: string) => join(keys[0], key));
+  });
+  const members = new Map<string, string[]>();
+  [...parent.keys()].forEach((key) => { const root = find(key); members.set(root, [...(members.get(root) || []), key]); });
+  const groupName = new Map<string, string>();
+  [...members.entries()].forEach(([root, urls], index) => groupName.set(root, urls.length > 1 ? `Shared provenance path ${index + 1} · ${urls.length} traces` : `Independent path ${index + 1}`));
+  return new Map([...parent.keys()].map((key) => [key, groupName.get(find(key)) || 'Independent path']));
+}
+
+function claimRelevance(source: any, claim: string) {
+  const terms = claimTerms(claim); if (!terms.length) return 40;
+  const inspectedTerms = (source.claimMatches || []).map((term: string) => term.toLowerCase());
+  const text = `${source.citedText || ''} ${source.snippet || ''}`.toLowerCase();
+  const matched = new Set([...inspectedTerms, ...terms.filter((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text))]);
+  return clamp(18 + (Math.min(terms.length, matched.size) / terms.length) * 82);
+}
+
+function compoundedEvidenceScore(artifact: any, clusters: any[]) {
+  const allSources = artifact.branches.flatMap((branch: any) => branch.sources);
+  const componentByUrl = provenanceComponents(allSources, clusters);
+  const combineSamePath = (values: number[]) => {
+    const ordered = [...values].sort((a, b) => b - a);
+    return clamp((ordered[0] || 0) + ordered.slice(1).reduce((total, value) => total + value * .18, 0));
+  };
+  const combineIndependentPaths = (values: number[]) => clamp(100 * (1 - values.reduce((remaining, value) => remaining * (1 - Math.min(.92, value / 100) * .82), 1)));
+  for (const branch of artifact.branches) {
+    if (branch.verdict === 'formally_checked' || branch.verdict === 'formally_refuted') continue;
+    const groups = new Map<string, { support:number[]; refute:number[]; context:number[]; primarySupport:boolean }>();
+    for (const source of branch.sources) {
+      const metrics = source.metrics || {};
+      const sourceQuality = clamp(source.credibilityScore ?? ((metrics.authority || 35) * .34 + (metrics.evidenceQuality || 20) * .38 + (metrics.transparency || 20) * .18 + (metrics.citationNetwork || 0) * .10));
+      const relevance = claimRelevance(source, branch.claim);
+      const directness = clamp(source.evidenceProfile?.directness ?? metrics.semanticDepth ?? 40);
+      const independence = clamp(metrics.independence ?? 45);
+      // A geometric mean keeps a single weak link visible: strong credentials cannot compensate for an irrelevant or derivative passage.
+      const contribution = clamp(Math.pow((sourceQuality / 100) * (relevance / 100) * (directness / 100) * (independence / 100), .25) * 100);
+      const sourceKey = canonicalSourceUrl(source.url); const provenanceGroup = componentByUrl.get(sourceKey) || 'Independent path';
+      source.credibilityPath = { sourceQuality, claimRelevance: relevance, directness, independence, compoundedContribution: contribution, provenanceGroup };
+      const bucket = groups.get(provenanceGroup) || { support:[], refute:[], context:[], primarySupport:false };
+      const stance = source.evidenceProfile?.stance || 'unclear';
+      if (stance === 'supports') { bucket.support.push(contribution); if (['primary','official_record','academic'].includes(source.evidenceProfile?.sourceType)) bucket.primarySupport = true; }
+      else if (stance === 'refutes') bucket.refute.push(contribution);
+      else if (stance === 'context') bucket.context.push(contribution);
+      groups.set(provenanceGroup, bucket);
+    }
+    const supportPaths = [...groups.values()].map((group) => combineSamePath(group.support)).filter(Boolean);
+    const refutePaths = [...groups.values()].map((group) => combineSamePath(group.refute)).filter(Boolean);
+    const contextPaths = [...groups.values()].map((group) => combineSamePath(group.context)).filter(Boolean);
+    const support = combineIndependentPaths(supportPaths);
+    const refutation = combineIndependentPaths(refutePaths);
+    const contextualCoverage = combineIndependentPaths(contextPaths);
+    const independentPaths = [...groups.values()].filter((group) => group.support.length || group.refute.length).length;
+    const primarySupportPaths = [...groups.values()].filter((group) => group.primarySupport).length;
+    const contradictory = support >= 42 && refutation >= 42;
+    const assessmentConfidence = clamp(Math.max(support, refutation) * .74 + contextualCoverage * .10 + Math.min(14, independentPaths * 4));
+    const nextVerdict = refutation >= 64 && refutation - support >= 14 ? 'refuted' : contradictory ? 'contested' : support >= 68 && primarySupportPaths >= 1 && supportPaths.length >= 2 ? 'corroborated' : support >= 44 ? 'provisionally_supported' : 'insufficient_evidence';
+    branch.supportStrength = support;
+    branch.confidenceScore = assessmentConfidence;
+    branch.verdict = nextVerdict;
+    branch.evidenceBalance = { support, refutation, contextualCoverage, netSupport: clamp(50 + (support - refutation) * .5), independentPaths, assessmentConfidence };
+    branch.decisionReasons = [
+      `Compounded supporting path strength: ${support}/100 across ${supportPaths.length} provenance-separated path${supportPaths.length === 1 ? '' : 's'}.`,
+      `Compounded refuting path strength: ${refutation}/100 across ${refutePaths.length} provenance-separated path${refutePaths.length === 1 ? '' : 's'}.`,
+      'Repeated sources within one publisher or observed shared-reference path are discounted before branch aggregation.'
+    ];
+    branch.sources.forEach((source: any) => { source.verificationStatus = nextVerdict === 'corroborated' ? 'verified' : nextVerdict === 'contested' || nextVerdict === 'refuted' ? 'contested' : 'checking'; });
+  }
+  const assessable = artifact.branches.filter((branch: any) => branch.verdict !== 'formally_checked' && branch.verdict !== 'formally_refuted');
+  if (assessable.length) artifact.confidenceScore = clamp(assessable.reduce((total: number, branch: any) => total + (branch.evidenceBalance?.assessmentConfidence ?? branch.confidenceScore), 0) / assessable.length);
+  const pathNotice = 'Compounded path model: source quality, exact claim relevance, directness, and independence are combined per trace; repeated provenance is discounted before support and refutation are aggregated.';
+  if (!String(artifact.evidenceStandard || '').includes('Compounded path model:')) artifact.evidenceStandard = `${artifact.evidenceStandard ? `${artifact.evidenceStandard} ` : ''}${pathNotice}`;
+  return artifact;
+}
+
 async function enrichEvidenceTopology(artifact: any, discoveryConnectors: string[] = []) {
   const sources = artifact.branches.flatMap((branch: any) => branch.sources.map((source: any) => ({ source, claim:branch.claim }))) as { source:any; claim:string }[];
   const activeSources = new Map<string, string>();
@@ -451,6 +532,7 @@ async function enrichEvidenceTopology(artifact: any, discoveryConnectors: string
       relations.set(key, { fromUrl, toUrl, kind:'shared_citation', strength:41, note:'These traces visibly link to the same external reference. It may reveal a common provenance path and should not be counted as independent corroboration.' });
     }
   }
+  compoundedEvidenceScore(artifact, clusters);
   artifact.evidenceRelations = [...relations.values()];
   artifact.provenanceClusters = clusters;
   artifact.researchMetadata = {
@@ -508,8 +590,8 @@ function mergeExpansionArtifact(artifact: any, expansion: any) {
 }
 
 const demoMetrics = (authority: number, evidenceQuality: number, independence: number, recency: number, transparency: number, corroboration: number, citationNetwork: number, semanticDepth: number) => ({ authority, evidenceQuality, independence, recency, transparency, corroboration, citationNetwork, semanticDepth });
-function demoSource(title: string, url: string, snippet: string, credibilityScore: number, profile: Profile, metrics: any, isDodgy = false) {
-  return { title, url, snippet, citedText: snippet.slice(0, Math.min(snippet.length, 92)), imageUrl: '', credibilityScore, isDodgy, author: '', publishedAt: '', citations: profile.citedReferenceCount, semanticDepth: profile.directness, verificationStatus: isDodgy ? 'checking' : 'verified', provider: 'openai_web', evidenceProfile: profile, metrics };
+function demoSource(title: string, url: string, snippet: string, credibilityScore: number, profile: Profile, metrics: any, isDodgy = false, imageUrl = '') {
+  return { title, url, snippet, citedText: snippet.slice(0, Math.min(snippet.length, 92)), imageUrl, isDemoVisual: Boolean(imageUrl), credibilityScore, isDodgy, author: '', publishedAt: '', citations: profile.citedReferenceCount, semanticDepth: profile.directness, verificationStatus: isDodgy ? 'checking' : 'verified', provider: 'openai_web', evidenceProfile: profile, metrics };
 }
 function demoInvestigation(query: string) {
   const official = { sourceType:'official_record', evidenceType:'direct_document', stance:'supports', authorNamed:true, methodologyVisible:true, correctionsVisible:true, citedReferenceCount:4, directness:94, reliabilityFlags:['none'] } as Profile;
@@ -517,7 +599,7 @@ function demoInvestigation(query: string) {
   const weak = { sourceType:'user_generated', evidenceType:'unverified', stance:'supports', authorNamed:false, methodologyVisible:false, correctionsVisible:false, citedReferenceCount:0, directness:18, reliabilityFlags:['no_supporting_material','anonymous_claim'] } as Profile;
   return { isDemo:true, coreConcept:'Guided demonstration: how Sourceful separates corroborated evidence from weak claims', confidenceScore:78, researchRoute:'historical' as const, biasAnalysis:'This is a simulated research artifact. Its source metrics and citations demonstrate the interface; they are not a live investigation or an endorsement of any external source.', evidenceStandard:'Guided demo: use it to explore the graph, dossier, briefing, library, and weak-node disintegration before connecting live APIs.', branches:[
     { claim:'A historical event can be supported by distinct primary and institutional records.', confidenceScore:91, verdict:'corroborated', biasAnalysis:'The evidence path prioritises primary records over repetition.', decisionReasons:['One official record and two independent institutional references are represented.','The sources have distinct provenance roles.'], sources:[
-      demoSource('NASA Apollo 11 Mission Overview','https://www.nasa.gov/mission/apollo-11/', 'Official mission records document the Apollo 11 mission and its lunar landing.',94,official,demoMetrics(94,96,86,70,90,92,72,94)),
+      demoSource('NASA Apollo 11 Mission Overview','https://www.nasa.gov/mission/apollo-11/', 'Official mission records document the Apollo 11 mission and its lunar landing.',94,official,demoMetrics(94,96,86,70,90,92,72,94),false,'/assets/guided-demo-research-desk.jpg'),
       demoSource('National Archives: Apollo 11','https://www.archives.gov/research/alic/reference/space-timeline.html','Archival materials preserve contemporary records of the Apollo program.',88,institutional,demoMetrics(87,84,82,62,81,88,60,82)),
       demoSource('Smithsonian National Air and Space Museum','https://airandspace.si.edu/collection-objects/command-module-apollo-11','A museum collection record identifies the Apollo 11 command module and its provenance.',86,institutional,demoMetrics(86,80,84,64,79,86,58,80))
     ]},
@@ -591,7 +673,7 @@ async function startServer() {
     if (!modelRoster.has(model)) return res.status(400).json({ error: 'Unsupported Sourceful model.' });
     if (!researchModes.has(requestedMode)) return res.status(400).json({ error: 'Unsupported research mode.' });
     if (file && !isSupportedUpload(file)) return res.status(415).json({ error: 'Unsupported attachment. Use PDF, DOCX, RTF, TXT, Markdown, CSV, JSON, PNG, JPEG, or WebP (up to 8 MB).' });
-    if (useDemo) return res.json(demoInvestigation(text));
+    if (useDemo) return res.json(compoundedEvidenceScore(demoInvestigation(text), []));
     const apiKey = requestApiKey(req.body?.apiKey);
     if (!apiKey) return res.status(401).json({ error: 'Connect an OpenAI API key in Sourceful’s API vault, or configure OPENAI_API_KEY on the server.' });
     try {

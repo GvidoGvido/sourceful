@@ -97,6 +97,7 @@ function sourceTone(source: Source) {
 
 function claimTone(branch: Branch) {
   if (branch.verdict === 'contested') return '#e69b56';
+  if (branch.verdict === 'refuted') return '#e2656f';
   if (branch.verdict === 'insufficient_evidence' || branch.verdict === 'formally_refuted') return '#dc7772';
   if ((branch.supportStrength ?? 0) >= 80) return '#a9f39b';
   if (branch.verdict === 'corroborated' || branch.verdict === 'formally_checked') return '#78c69d';
@@ -109,10 +110,11 @@ function branchEvidenceDistance(branch: Branch) {
   const credibility = average(sources.map((source) => source.credibilityScore ?? 50), 40);
   const directness = average(sources.map((source) => source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45), 40);
   const evidenceQuality = average(sources.map((source) => source.metrics?.evidenceQuality ?? 45), 40);
+  const compoundedPath = Math.max(branch.evidenceBalance?.support ?? 0, branch.evidenceBalance?.refutation ?? 0);
   // Spatial distance means evidentiary proximity, not a claim's popularity or a generic confidence score.
   // Direct counterevidence can therefore sit close to the query too—its rose/red colour carries the relation.
-  const evidentiaryProximity = directness * .56 + evidenceQuality * .27 + credibility * .17;
-  const verdictPenalty: Record<string, number> = { corroborated: -.28, formally_checked: -.28, provisionally_supported: .42, contested: 1.05, insufficient_evidence: 1.72, formally_refuted: 1.56 };
+  const evidentiaryProximity = directness * .39 + evidenceQuality * .21 + credibility * .13 + compoundedPath * .27;
+  const verdictPenalty: Record<string, number> = { corroborated: -.28, formally_checked: -.28, provisionally_supported: .42, contested: 1.05, insufficient_evidence: 1.72, refuted: .10, formally_refuted: 1.56 };
   const hasContradiction = sources.some((source) => source.evidenceProfile?.stance === 'supports') && sources.some((source) => source.evidenceProfile?.stance === 'refutes');
   return 3.05 + (100 - evidentiaryProximity) * .058 + (verdictPenalty[branch.verdict || ''] || .72) + (hasContradiction ? .25 : 0);
 }
@@ -157,11 +159,12 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
           const sourceNodeId = `source-${index}-${sourceIndex}`;
           const stance = source.evidenceProfile?.stance || 'unclear';
           const directSupport = stance === 'supports' && (source.evidenceProfile?.directness ?? 0) >= 90 && !source.isDodgy;
+          const pathSuffix = source.credibilityPath ? ` · PATH ${source.credibilityPath.compoundedContribution}%` : '';
           return <React.Fragment key={source.graphId || sourceNodeId}>
             {isSelectedSource && <Line points={[points[index], sourcePos]} color="#ffe29a" lineWidth={3.8} transparent opacity={.46}/>}
             <Line points={[points[index], sourcePos]} color={isSelectedSource ? '#ffe29a' : color} lineWidth={isSelectedSource ? 1.65 : .72} transparent opacity={isSelectedSource ? .96 : .55}/>
             <Pulse start={points[index]} end={sourcePos} color={color} delay={index * .12 + sourceIndex * .09} active={isSelectedSource}/>
-            <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003) + (directSupport ? .028 : 0)} label={stance === 'refutes' ? 'REFUTING TRACE' : directSupport ? `DIRECT SUPPORT · ${source.evidenceProfile?.directness}%` : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'} detail={source.title} preview={source.snippet} citedText={source.citedText} imageUrl={source.imageUrl} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
+            <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003) + (directSupport ? .028 : 0)} label={`${stance === 'refutes' ? 'REFUTING TRACE' : directSupport ? `DIRECT SUPPORT · ${source.evidenceProfile?.directness}%` : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'}${pathSuffix}`} detail={source.title} preview={source.snippet} citedText={source.citedText} imageUrl={source.imageUrl} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
           </React.Fragment>;
         })}
       </React.Fragment>;

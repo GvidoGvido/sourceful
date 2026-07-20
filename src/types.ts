@@ -8,6 +8,8 @@ export interface Source {
   imageUrl?: string;
   /** Verified visual metadata fetched from this same source page only. */
   imageUrls?: string[];
+  /** A locally bundled guided-demo illustration. Never use this as source evidence. */
+  isDemoVisual?: boolean;
   /** Exact terms from the active claim that occur in the fetched source extract. */
   claimMatches?: string[];
   contentInspected?: boolean;
@@ -26,6 +28,8 @@ export interface Source {
   provider?: 'openai_web' | 'gemini_google';
   evidenceProfile?: EvidenceProfile;
   metrics?: SourceMetrics;
+  /** An auditable path from the source to the current claim, not a probability that the claim is true. */
+  credibilityPath?: CredibilityPath;
 }
 
 export interface EvidenceRelation {
@@ -78,6 +82,24 @@ export interface SourceMetrics {
   semanticDepth: number;
 }
 
+export interface CredibilityPath {
+  sourceQuality: number;
+  claimRelevance: number;
+  directness: number;
+  independence: number;
+  compoundedContribution: number;
+  provenanceGroup: string;
+}
+
+export interface EvidenceBalance {
+  support: number;
+  refutation: number;
+  contextualCoverage: number;
+  netSupport: number;
+  independentPaths: number;
+  assessmentConfidence: number;
+}
+
 export interface Branch {
   /** Client-side graph identity. Claim wording is not guaranteed to be globally unique. */
   graphId?: string;
@@ -86,8 +108,10 @@ export interface Branch {
   /** Separate from confidence: the strength of supporting evidence currently observed for this branch. */
   supportStrength?: number;
   biasAnalysis?: string;
-  verdict?: 'corroborated' | 'provisionally_supported' | 'contested' | 'insufficient_evidence' | 'formally_checked' | 'formally_refuted';
+  verdict?: 'corroborated' | 'provisionally_supported' | 'contested' | 'insufficient_evidence' | 'refuted' | 'formally_checked' | 'formally_refuted';
   decisionReasons?: string[];
+  /** Compounded contribution scores are kept separate from the branch verdict. */
+  evidenceBalance?: EvidenceBalance;
   sources: Source[];
 }
 
