@@ -14,6 +14,9 @@ interface NodeGraphProps {
   onDisintegrationComplete?: () => void;
 }
 
+type BoardPointer = { x: number; y: number };
+type PinchGesture = { distance: number; centerX: number; centerY: number; localX: number; localY: number; zoom: number; viewX: number; viewY: number };
+
 const generateLayout = (data: VerificationResult) => {
   const CORE_W = 380;
   const CORE_H = 200;
@@ -166,6 +169,8 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
   const { nodes, edges, bounds } = useMemo(() => generateLayout(data), [data]);
   const boardRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number; viewX: number; viewY: number } | null>(null);
+  const pointersRef = useRef(new Map<number, BoardPointer>());
+  const pinchRef = useRef<PinchGesture | null>(null);
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
   const [view, setView] = useState({ x: 0, y: 0, zoom: .35 });
   const fitInset = { horizontal: 72, top: 86, bottom: 76 };
@@ -183,6 +188,13 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
     setView((current) => ({ x: pointerX - (pointerX - current.x) * (zoom / current.zoom), y: pointerY - (pointerY - current.y) * (zoom / current.zoom), zoom }));
   };
   const changeZoom = (amount: number) => zoomAt(view.zoom + amount);
+  const beginPinch = () => {
+    const pointers = [...pointersRef.current.values()]; const rect = boardRef.current?.getBoundingClientRect();
+    if (!rect || pointers.length !== 2) return;
+    const [first, second] = pointers; const centerX = (first.x + second.x) / 2; const centerY = (first.y + second.y) / 2;
+    pinchRef.current = { distance: Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)), centerX, centerY, localX: centerX - rect.left - rect.width / 2, localY: centerY - rect.top - rect.height / 2, zoom: view.zoom, viewX: view.x, viewY: view.y };
+    panRef.current = null;
+  };
   useEffect(() => {
     const element = boardRef.current; if (!element) return;
     const observer = new ResizeObserver(([entry]) => setBoardSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
@@ -192,7 +204,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
   useEffect(() => { if ((!disintegratingSourceUrl && !disintegratingClaim) || !onDisintegrationComplete) return; const timer = window.setTimeout(onDisintegrationComplete, 1320); return () => window.clearTimeout(timer); }, [disintegratingSourceUrl, disintegratingClaim, onDisintegrationComplete]);
   
   return (
-    <div ref={boardRef} className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing" onWheel={(event) => { event.preventDefault(); zoomAt(view.zoom * (event.deltaY > 0 ? .84 : 1.18), event.clientX, event.clientY); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest('button, a, input, details, [data-board-control]')) return; panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { const pan = panRef.current; if (!pan || pan.pointerId !== event.pointerId) return; setView((current) => ({ ...current, x: pan.viewX + event.clientX - pan.x, y: pan.viewY + event.clientY - pan.y })); }} onPointerUp={(event) => { if (panRef.current?.pointerId === event.pointerId) { panRef.current = null; event.currentTarget.releasePointerCapture(event.pointerId); } }} onPointerCancel={() => { panRef.current = null; }}>
+    <div ref={boardRef} className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none" onWheel={(event) => { event.preventDefault(); zoomAt(view.zoom * (event.deltaY > 0 ? .84 : 1.18), event.clientX, event.clientY); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest('button, a, input, details, [data-board-control]')) return; pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); event.currentTarget.setPointerCapture(event.pointerId); if (pointersRef.current.size === 2) beginPinch(); else if (pointersRef.current.size === 1) panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y }; }} onPointerMove={(event) => { const pointer = pointersRef.current.get(event.pointerId); if (!pointer) return; pointer.x = event.clientX; pointer.y = event.clientY; const pinch = pinchRef.current; if (pinch && pointersRef.current.size === 2) { const [first, second] = [...pointersRef.current.values()]; const distance = Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)); const centerX = (first.x + second.x) / 2; const centerY = (first.y + second.y) / 2; const zoom = clampZoom(pinch.zoom * (distance / pinch.distance)); const ratio = zoom / pinch.zoom; setView({ x: pinch.localX - (pinch.localX - pinch.viewX) * ratio + centerX - pinch.centerX, y: pinch.localY - (pinch.localY - pinch.viewY) * ratio + centerY - pinch.centerY, zoom }); return; } const pan = panRef.current; if (!pan || pan.pointerId !== event.pointerId) return; setView((current) => ({ ...current, x: pan.viewX + event.clientX - pan.x, y: pan.viewY + event.clientY - pan.y })); }} onPointerUp={(event) => { pointersRef.current.delete(event.pointerId); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); panRef.current = null; pinchRef.current = null; }} onPointerCancel={(event) => { pointersRef.current.delete(event.pointerId); panRef.current = null; pinchRef.current = null; }}>
       <div className="board-zoom-controls" data-board-control onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(.12)} title="Zoom in"><Plus size={15}/></button><span>{Math.round(view.zoom * 100)}%</span><button onClick={() => changeZoom(-.12)} title="Zoom out"><Minus size={15}/></button><button onClick={fitGraph} title="Fit entire knowledge graph"><Maximize2 size={14}/></button></div>
       <div className="board-world" style={{ transform: `translate3d(calc(-50% + ${view.x}px), calc(-50% + ${view.y}px), 0) scale(${view.zoom})` }}>
         <div className="relative pointer-events-none" style={{ width: 0, height: 0 }}>
