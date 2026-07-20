@@ -137,9 +137,34 @@ Key safety: keys are not persisted or logged by the server. “Remember key” i
 
 **Suggested track:** Education — Sourceful teaches researchers to distinguish original evidence, independent corroboration, counterevidence, and unsupported repetition.
 
-**How OpenAI was used:** GPT-5.6 powers route selection, structured source extraction, web research, and briefing generation. Codex accelerated the end-to-end build: React and Three.js graph surfaces, Express retrieval and provenance logic, deterministic path scoring, the browser key vault, interaction design, deployment configuration, and verification passes.
+### How GPT-5.6 powers Sourceful
 
-For a submission, pair this repository and the public deployment URL with a short demo showing a live BYOK investigation, the evidence path/dossier, and the distinction between supporting and refuting provenance paths. Add the required `/feedback` session ID in Devpost rather than committing it to the repository.
+GPT-5.6 is the reasoning layer behind each live research pass. Through the OpenAI Responses API, it:
+
+- classifies the question into an appropriate research route (public claim, history, scripture, mathematics, or document-led investigation);
+- uses web search to discover and compare relevant public material;
+- converts the research into a strict, structured claim/source graph rather than free-form prose;
+- extracts a claim-aligned passage, stance, and observable evidence attributes for every trace; and
+- produces a readable research brief that preserves uncertainty, counterevidence, and the limits of the current investigation.
+
+Sourceful deliberately keeps the final credibility calculations deterministic and inspectable on the server. GPT-5.6 supplies structured observations from retrieved evidence; Sourceful then applies provenance clustering, directness caps, repeated-origin discounts, and separate support/refutation aggregation. The result is an AI-assisted workflow where the route to a conclusion remains visible and challengeable.
+
+### How Codex accelerated the build
+
+Codex was used throughout the end-to-end implementation and refinement of Sourceful:
+
+- building the React, Tailwind, Framer Motion, and Three.js 3D discovery surface alongside the fixed-scale 2D research board;
+- implementing the Express research API, OpenAI Responses workflow, route-aware public metadata adapters, structured validation, and evidence/provenance scoring pipeline;
+- designing the interaction model: draggable graph navigation, hover extracts, selected-path highlighting, source dossiers, CSV export, saved research artefacts, and research briefs;
+- creating the browser-managed BYOK vault and its safety controls, including local AES-GCM encryption for opt-in remembered keys;
+- iterating on accessible responsive layouts, light/dark visual systems, animations, tooltips, and mobile graph controls; and
+- adding deployment assets, verification checks, and documentation for a public Cloud Run demo.
+
+This is not a claim that the model independently produced reliable verdicts. Codex accelerated implementation decisions, testing, and visual/interaction iteration; GPT-5.6 performs bounded retrieval and structured analysis within Sourceful's explicit evidence model.
+
+### Submission checklist
+
+For a submission, pair this repository and the public deployment URL with a public demo under three minutes that shows a live BYOK investigation, an evidence path/dossier, and the distinction between supporting and refuting provenance paths. Explain in the narration how Codex accelerated the build and how GPT-5.6 is used in the live workflow. Add the required `/feedback` session ID in Devpost rather than committing it to the repository.
 
 ## Validation
 
