@@ -98,6 +98,7 @@ function sourceTone(source: Source) {
 function claimTone(branch: Branch) {
   if (branch.verdict === 'contested') return '#e69b56';
   if (branch.verdict === 'insufficient_evidence' || branch.verdict === 'formally_refuted') return '#dc7772';
+  if ((branch.supportStrength ?? 0) >= 80) return '#a9f39b';
   if (branch.verdict === 'corroborated' || branch.verdict === 'formally_checked') return '#78c69d';
   return '#d8a24b';
 }
@@ -130,14 +131,16 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
   return <div className="discovery-universe"><Canvas onPointerMissed={() => setActiveNode(null)} dpr={[1, 2]} camera={{ position: [0, 0, cameraDistance], fov: 45 }} gl={{ antialias:true, alpha:true }} style={{ touchAction: 'none' }}><color attach="background" args={[isDarkMode ? '#090d13' : '#f6f4ef']}/><fog attach="fog" args={[isDarkMode ? '#090d13' : '#f6f4ef', sceneRadius + 4, sceneRadius * 3.25]}/><ambientLight intensity={.34}/><pointLight position={[0, 1, 4]} intensity={42} color="#d9ad50"/><pointLight position={[-4, -3, 3]} intensity={19} color="#5ca4d5"/><pointLight position={[4, 2, -3]} intensity={12} color="#77c5a0"/><Sparkles count={Math.min(540, 280 + totalSources * 7)} scale={[sceneRadius * 3.1,sceneRadius * 1.9,9]} size={1.65} speed={.25} color={isDarkMode ? '#ead083' : '#a67b24'}/>
     <Orb nodeId="core" active={activeNode === 'core'} selected={selectedBranchIndex >= 0} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={[0,0,0]} color="#d4a64b" size={1.08} label="CORE QUESTION" detail={data.coreConcept} preview={data.biasAnalysis} order={0}/>
     {branches.map((branch, index) => {
+      const strongSupport = (branch.supportStrength ?? 0) >= 80 && branch.verdict !== 'contested';
       const branchColor = claimTone(branch);
       const isSelectedBranch = index === selectedBranchIndex;
       const branchNodeId = `claim-${index}`;
       return <React.Fragment key={branch.graphId || branchNodeId}>
         {isSelectedBranch ? <Line points={[[0, 0, 0], points[index]]} color="#ffe29a" lineWidth={4.8} transparent opacity={.44}/> : null}
-        <Line points={[[0, 0, 0], points[index]]} color={isSelectedBranch ? '#ffe29a' : branchColor} lineWidth={isSelectedBranch ? 2.2 : 1.15} transparent opacity={isSelectedBranch ? .96 : .58}/>
+        {strongSupport && <Line points={[[0, 0, 0], points[index]]} color="#bdf9a3" lineWidth={4.7} transparent opacity={.19}/>}
+        <Line points={[[0, 0, 0], points[index]]} color={isSelectedBranch ? '#ffe29a' : branchColor} lineWidth={isSelectedBranch ? 2.2 : strongSupport ? 1.65 : 1.15} transparent opacity={isSelectedBranch ? .96 : strongSupport ? .86 : .58}/>
         <Pulse start={[0, 0, 0]} end={points[index]} color={branchColor} delay={index * .15} active={isSelectedBranch}/>
-        <Orb nodeId={branchNodeId} active={activeNode === branchNodeId} selected={isSelectedBranch} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={points[index]} color={branchColor} size={.52} label={`${branch.verdict?.replaceAll('_', ' ') || 'CLAIM'} · ${String(index + 1).padStart(2, '0')}`} detail={branch.claim} preview={branch.biasAnalysis} onClick={() => onClaimSelect?.(branch)} order={index + 1} disintegrating={disintegratingClaimId === branch.graphId} onDisintegrationComplete={disintegratingClaimId === branch.graphId ? onDisintegrationComplete : undefined}/>
+        <Orb nodeId={branchNodeId} active={activeNode === branchNodeId} selected={isSelectedBranch} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={points[index]} color={branchColor} size={.52 + (strongSupport ? .065 : 0)} label={strongSupport ? `EVIDENCE SUPPORT · ${branch.supportStrength}%` : `${branch.verdict?.replaceAll('_', ' ') || 'CLAIM'} · ${String(index + 1).padStart(2, '0')}`} detail={branch.claim} preview={branch.biasAnalysis} onClick={() => onClaimSelect?.(branch)} order={index + 1} disintegrating={disintegratingClaimId === branch.graphId} onDisintegrationComplete={disintegratingClaimId === branch.graphId ? onDisintegrationComplete : undefined}/>
         {branch.sources.map((source, sourceIndex) => {
           const credibility = source.credibilityScore ?? 50;
           const directness = source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45;

@@ -252,7 +252,7 @@ body {
 .metric-help[aria-expanded="true"] > span { opacity:1; transform:translateY(0); pointer-events:auto; }
 @media (max-width:420px) { .metric-help > span { width:calc(100vw - 56px); min-width:0; font-size:11px; } }
 
-/* Source visual metadata becomes a calm visual trace: the selected page leads, then available active-source imagery fades through. */
+/* Source visual metadata becomes a calm visual trace: only metadata fetched from the selected page may fade through. */
 .dossier-visual-carousel { position:relative; height:132px; margin:15px 0 3px; overflow:hidden; border:1px solid rgba(209,169,77,.34); border-radius:12px; background:linear-gradient(135deg,rgba(45,79,116,.2),rgba(12,17,26,.44)); box-shadow:0 15px 34px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.1); }
 .dossier-visual-carousel:before,.dossier-visual-carousel:after { position:absolute; z-index:2; right:0; left:0; height:35%; content:""; pointer-events:none; }.dossier-visual-carousel:before { top:0; background:linear-gradient(180deg,rgba(9,14,22,.56),transparent); }.dossier-visual-carousel:after { bottom:0; background:linear-gradient(0deg,rgba(9,14,22,.76),transparent); }
 .dossier-visual-carousel img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; filter:saturate(1.04) contrast(1.03); }
@@ -262,6 +262,7 @@ body {
 /* Selected cards and direct-support traces are visually distinct from the separate credibility score. */
 .node-selected-trace { isolation:isolate; }.node-selected-trace:before { position:absolute; z-index:3; inset:-1px; padding:2px; border-radius:inherit; content:""; pointer-events:none; background:linear-gradient(106deg,transparent 4%,rgba(244,197,87,.14) 33%,#fff0aa 47%,#c99030 53%,rgba(244,197,87,.14) 67%,transparent 96%) 200% 0/200% 100%; -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; filter:drop-shadow(0 0 8px rgba(246,205,108,.82)); animation:selected-edge-current 2.25s linear infinite; }
 .direct-support-node { box-shadow:0 0 0 1px rgba(180,247,154,.46),0 0 52px -8px rgba(167,246,139,.5)!important; }.direct-support-node:after { position:absolute; z-index:1; inset:0; border-radius:inherit; content:""; pointer-events:none; background:radial-gradient(circle at 70% 18%,rgba(202,255,178,.19),transparent 35%); mix-blend-mode:screen; }
+.strong-support-branch { border-color:rgba(187,247,163,.76)!important; box-shadow:0 0 0 1px rgba(187,247,163,.24),0 0 48px -7px rgba(171,245,146,.5)!important; }.strong-support-branch:after { position:absolute; z-index:0; inset:0; border-radius:inherit; content:""; pointer-events:none; background:radial-gradient(circle at 78% 20%,rgba(202,255,178,.17),transparent 35%); }
 @keyframes selected-edge-current { to { background-position:-200% 0; } }
 
 /* Hover previews include verified source imagery on the same plaque without competing with the quote. */

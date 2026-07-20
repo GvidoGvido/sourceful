@@ -406,12 +406,14 @@ function CoreNode({ data, isDarkMode, energized }: { data: VerificationResult, i
 }
 
 function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data: Branch, isDarkMode: boolean, onSelect?: (claim: Branch) => void, energized?: boolean, selected?: boolean }) {
+  const strongSupport = (data.supportStrength ?? 0) >= 80 && data.verdict !== 'contested';
   return (
     <button type="button" onClick={() => onSelect?.(data)} title="Open confidence claim controls" className={cn(
       "w-full h-full rounded-xl border p-6 flex flex-col justify-center text-left shadow-[0_0_30px_-10px_rgba(148,163,184,0.3)] transition-colors backdrop-blur-xl relative cursor-pointer hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-amber-400/70",
       isDarkMode ? "bg-slate-800/90 border-slate-600/50" : "bg-slate-50/90 border-slate-300",
       energized && "border-amber-300/90 ring-2 ring-amber-300/60 shadow-[0_0_44px_-4px_rgba(248,212,124,0.8)]",
-      selected && "node-selected-trace"
+      selected && "node-selected-trace",
+      strongSupport && "strong-support-branch"
     )}>
       <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border-4 flex items-center justify-center bg-slate-900 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]">
         <div className="w-2 h-2 rounded-full bg-blue-400" />
@@ -424,7 +426,7 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
         {data.claim}
       </p>
       
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-wrap gap-2">
          <div className={cn("inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono", 
             data.confidenceScore > 70 
               ? (isDarkMode ? "bg-green-500/10 border-green-500/30 text-green-400" : "bg-green-50 border-green-200 text-green-700")
@@ -432,6 +434,7 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
          )}>
            <Activity size={12} /> Claim Score: {data.confidenceScore}%
          </div>
+         {typeof data.supportStrength === 'number' && <div className={cn("inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono", strongSupport ? (isDarkMode ? "bg-lime-400/10 border-lime-300/40 text-lime-200" : "bg-lime-50 border-lime-300 text-lime-800") : (isDarkMode ? "bg-slate-700/35 border-slate-500/30 text-slate-300" : "bg-slate-100 border-slate-300 text-slate-700"))}><Target size={12}/> Evidence support: {data.supportStrength}%</div>}
       </div>
     </button>
   );

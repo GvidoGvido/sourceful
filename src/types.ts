@@ -6,6 +6,10 @@ export interface Source {
   snippet: string;
   citedText: string;
   imageUrl?: string;
+  /** Verified visual metadata fetched from this same source page only. */
+  imageUrls?: string[];
+  /** Exact terms from the active claim that occur in the fetched source extract. */
+  claimMatches?: string[];
   contentInspected?: boolean;
   credibilityScore?: number;
   isDodgy?: boolean;
@@ -73,6 +77,8 @@ export interface Branch {
   graphId?: string;
   claim: string;
   confidenceScore: number;
+  /** Separate from confidence: the strength of supporting evidence currently observed for this branch. */
+  supportStrength?: number;
   biasAnalysis?: string;
   verdict?: 'corroborated' | 'provisionally_supported' | 'contested' | 'insufficient_evidence' | 'formally_checked' | 'formally_refuted';
   decisionReasons?: string[];

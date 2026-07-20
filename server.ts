@@ -141,9 +141,14 @@ function evaluateResult(raw: any, route: ResearchRoute, mathCheck: MathCheck) {
     const formal = route === 'math' && mathCheck?.kind === 'identity';
     const status = formal ? (mathCheck?.isTrue ? 'formally_checked' : 'formally_refuted') : contradiction ? 'contested' : primarySupport >= 1 && independentSupport >= 3 ? 'corroborated' : independentSupport >= 2 ? 'provisionally_supported' : 'insufficient_evidence';
     const confidenceScore = formal ? 100 : status === 'corroborated' ? clamp(65 + primarySupport * 6 + independentSupport * 4) : status === 'provisionally_supported' ? clamp(45 + independentSupport * 8) : status === 'contested' ? clamp(42 + Math.min(16, Math.abs(independentSupport - independentRefute) * 4)) : clamp(15 + independentSupport * 10);
+    // Support strength is intentionally separate from confidence. It is a visual routing signal:
+    // the directness and quality of evidence that supports this branch, moderated by counterevidence.
+    const evidenceSignal = (items: any[]) => items.length ? items.reduce((total, source) => total + source.evidenceProfile.directness * .54 + source.metrics.evidenceQuality * .28 + source.credibilityScore * .18, 0) / items.length : 0;
+    const supportSignal = evidenceSignal(support); const refuteSignal = evidenceSignal(refute);
+    const supportStrength = formal ? (mathCheck?.isTrue ? 100 : 0) : clamp(supportSignal * .74 + Math.min(16, independentSupport * 5) + Math.min(8, primarySupport * 4) - refuteSignal * .24);
     const reasons = formal ? [`Numeric identity evaluated locally: ${mathCheck?.result}.`, mathCheck?.note || ''] : [primarySupport ? `${primarySupport} high-evidence primary, official, or academic source${primarySupport === 1 ? '' : 's'} found.` : 'No high-evidence primary, official, or academic source found.', `${independentSupport} independent high-evidence supporting domain${independentSupport === 1 ? '' : 's'} found.`, independentRefute ? `${independentRefute} independent high-evidence contradicting domain${independentRefute === 1 ? '' : 's'} found.` : 'No independent high-evidence contradiction extracted.'];
     enriched.forEach((s: any) => { s.metrics.corroboration = clamp((s.evidenceProfile.stance === 'supports' ? independentSupport : s.evidenceProfile.stance === 'refutes' ? independentRefute : 0) * 25); s.verificationStatus = status === 'corroborated' ? 'verified' : status === 'contested' ? 'contested' : 'checking'; });
-    return { claim: branch.claim, confidenceScore, biasAnalysis: branch.biasAnalysis, verdict: status, decisionReasons: reasons, sources: enriched };
+    return { claim: branch.claim, confidenceScore, supportStrength, biasAnalysis: branch.biasAnalysis, verdict: status, decisionReasons: reasons, sources: enriched };
   });
   const confident = branches.filter((branch: any) => branch.verdict === 'corroborated').length;
   return { coreConcept: raw.coreConcept, confidenceScore: clamp(branches.reduce((total: number, branch: any) => total + branch.confidenceScore, 0) / Math.max(1, branches.length)), biasAnalysis: raw.biasAnalysis, researchRoute: route, evidenceStandard: route === 'math' && mathCheck ? 'Formal route: numeric identities are evaluated locally; symbolic proofs remain explicitly limited.' : `Conservative evidence gate: ${confident}/${branches.length} branch claims meet the corroboration threshold.`, branches };
@@ -169,16 +174,44 @@ async function safePublicUrl(value: string) {
   } catch { return null; }
 }
 
-function openGraphImage(html: string, baseUrl: string) {
+function openGraphImages(html: string, baseUrl: string) {
+  const images = new Set<string>();
   const tags = html.match(/<meta\b[^>]*>/gi) || [];
   for (const tag of tags) {
     const key = /(?:property|name)\s*=\s*["']?([^"'\s>]+)/i.exec(tag)?.[1]?.toLowerCase();
     const content = /content\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
     if ((key === 'og:image' || key === 'twitter:image' || key === 'twitter:image:src') && content) {
-      try { return new URL(content, baseUrl).href; } catch { return ''; }
+      try { images.add(new URL(content, baseUrl).href); } catch { /* Ignore malformed metadata. */ }
     }
   }
-  return '';
+  return [...images].slice(0, 4);
+}
+
+function decodedVisibleText(html: string) {
+  const description = /<meta\b[^>]*(?:name|property)\s*=\s*["']?(?:description|og:description)["']?[^>]*content\s*=\s*["']([^"']+)["']/i.exec(html)?.[1] || '';
+  const withoutNonContent = html.replace(/<(script|style|noscript|svg|nav|footer|header|form|aside)\b[\s\S]*?<\/\1>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+  const visible = withoutNonContent.replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;|&#34;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/\s+/g, ' ').trim();
+  return `${description} ${visible}`.replace(/\s+/g, ' ').trim().slice(0, 42_000);
+}
+
+const claimStopWords = new Set(['about','after','against','also','among','because','been','being','between','could','does','from','have','into','more','most','only','other','over','said','some','such','than','that','their','there','these','they','this','those','through','under','very','was','were','what','when','which','while','with','would','your']);
+function claimTerms(claim: string) {
+  return [...new Set((claim.toLowerCase().match(/[a-z0-9][a-z0-9'-]{2,}/g) || []).filter((term) => !claimStopWords.has(term)))].slice(0, 18);
+}
+function alignClaimExtract(pageText: string, claim: string) {
+  const terms = claimTerms(claim); if (!pageText || terms.length < 1) return null;
+  const sentences = pageText.match(/[^.!?]{50,620}[.!?]+/g) || [];
+  let best = ''; let bestTerms: string[] = []; let bestScore = 0;
+  for (const sentence of sentences.slice(0, 180)) {
+    const lowered = sentence.toLowerCase(); const matches = terms.filter((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lowered));
+    const score = matches.reduce((total, term) => total + Math.min(1.9, term.length / 5), 0) + (matches.length >= 3 ? 1.4 : 0);
+    if (matches.length >= 2 && score > bestScore) { best = sentence.trim(); bestTerms = matches; bestScore = score; }
+  }
+  if (!best || bestTerms.length < 2) return null;
+  const focus = bestTerms.sort((left, right) => right.length - left.length)[0];
+  const words = best.match(/\S+/g) || []; const focusIndex = Math.max(0, words.findIndex((word) => word.toLowerCase().replace(/[^a-z0-9'-]/g, '').includes(focus)));
+  const citedText = words.slice(Math.max(0, focusIndex - 2), Math.min(words.length, focusIndex + 5)).join(' ');
+  return { snippet: best.slice(0, 620), citedText: citedText || focus, matches: bestTerms.slice(0, 6) };
 }
 
 function canonicalSourceUrl(value: string) {
@@ -207,7 +240,7 @@ function observedActiveLinks(html: string, baseUrl: string, activeSources: Map<s
   return [...links];
 }
 
-type SourceSnapshot = { imageUrl: string; outboundActiveUrls: string[]; inspected: boolean };
+type SourceSnapshot = { imageUrls: string[]; pageText: string; outboundActiveUrls: string[]; inspected: boolean };
 
 async function fetchSourceSnapshot(sourceUrl: string, activeSources: Map<string, string>): Promise<SourceSnapshot> {
   let current = await safePublicUrl(sourceUrl);
@@ -216,13 +249,13 @@ async function fetchSourceSnapshot(sourceUrl: string, activeSources: Map<string,
       const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Sourceful evidence thumbnail resolver/1.0' } });
       if (response.status >= 300 && response.status < 400) { current = await safePublicUrl(new URL(response.headers.get('location') || '', current).href); continue; }
       const length = Number(response.headers.get('content-length') || 0);
-      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return { imageUrl:'', outboundActiveUrls:[], inspected:true };
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return { imageUrls:[], pageText:'', outboundActiveUrls:[], inspected:true };
       const html = (await response.text()).slice(0, 750_000);
-      const candidate = openGraphImage(html, current.href);
-      return { imageUrl: candidate && await safePublicUrl(candidate) ? candidate : '', outboundActiveUrls: observedActiveLinks(html, current.href, activeSources), inspected:true };
-    } catch { return { imageUrl:'', outboundActiveUrls:[], inspected:true }; }
+      const imageUrls = (await Promise.all(openGraphImages(html, current.href).map(async (candidate) => (await safePublicUrl(candidate))?.href || ''))).filter(Boolean);
+      return { imageUrls, pageText: decodedVisibleText(html), outboundActiveUrls: observedActiveLinks(html, current.href, activeSources), inspected:true };
+    } catch { return { imageUrls:[], pageText:'', outboundActiveUrls:[], inspected:true }; }
   }
-  return { imageUrl:'', outboundActiveUrls:[], inspected:true };
+  return { imageUrls:[], pageText:'', outboundActiveUrls:[], inspected:true };
 }
 
 function provenanceClusters(artifact: any) {
@@ -236,16 +269,19 @@ function provenanceClusters(artifact: any) {
 }
 
 async function enrichEvidenceTopology(artifact: any) {
-  const sources = artifact.branches.flatMap((branch: any) => branch.sources) as any[];
+  const sources = artifact.branches.flatMap((branch: any) => branch.sources.map((source: any) => ({ source, claim:branch.claim }))) as { source:any; claim:string }[];
   const activeSources = new Map<string, string>();
-  sources.forEach((source) => { const key = canonicalSourceUrl(source.url); if (key) activeSources.set(key, source.url); });
-  const pending = sources.filter((source) => !source.contentInspected).slice(0, MAX_SOURCE_PAGES_PER_PASS);
-  const snapshots = await Promise.all(pending.map(async (source) => ({ source, snapshot: await fetchSourceSnapshot(source.url, activeSources) })));
+  sources.forEach(({ source }) => { const key = canonicalSourceUrl(source.url); if (key) activeSources.set(key, source.url); });
+  const pending = sources.filter(({ source }) => !source.contentInspected).slice(0, MAX_SOURCE_PAGES_PER_PASS);
+  const snapshots = await Promise.all(pending.map(async ({ source, claim }) => ({ source, claim, snapshot: await fetchSourceSnapshot(source.url, activeSources) })));
   const relations = new Map<string, any>();
   for (const relation of artifact.evidenceRelations || []) relations.set(`${canonicalSourceUrl(relation.fromUrl)}>${canonicalSourceUrl(relation.toUrl)}:${relation.kind}`, relation);
-  for (const { source, snapshot } of snapshots) {
+  for (const { source, claim, snapshot } of snapshots) {
     source.contentInspected = snapshot.inspected;
-    if (!source.imageUrl && snapshot.imageUrl) source.imageUrl = snapshot.imageUrl;
+    source.imageUrls = [...new Set([source.imageUrl, ...(source.imageUrls || []), ...snapshot.imageUrls].filter(Boolean))].slice(0, 4);
+    if (!source.imageUrl && source.imageUrls.length) source.imageUrl = source.imageUrls[0];
+    const aligned = alignClaimExtract(snapshot.pageText, claim);
+    if (aligned) { source.snippet = aligned.snippet; source.citedText = aligned.citedText; source.claimMatches = aligned.matches; }
     source.observedReferenceCount = snapshot.outboundActiveUrls.length;
     for (const targetUrl of snapshot.outboundActiveUrls) {
       if (canonicalSourceUrl(source.url) === canonicalSourceUrl(targetUrl)) continue;
@@ -267,7 +303,7 @@ async function enrichEvidenceTopology(artifact: any) {
     completedPasses: Number(artifact.researchMetadata?.completedPasses || 1),
     maxPasses: MAX_RESEARCH_PASSES,
     nodeBudget: MAX_GRAPH_SOURCES,
-    sourcePagesInspected: sources.filter((source) => source.contentInspected).length,
+    sourcePagesInspected: sources.filter(({ source }) => source.contentInspected).length,
     observedRelations: artifact.evidenceRelations.length
   };
   return artifact;
