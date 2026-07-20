@@ -155,6 +155,7 @@ body {
 /* Mobile graph navigation and panels are deliberate, single-layer surfaces. */
 .discovery-universe canvas { touch-action:none; }
 .source-dossier,.artifact-library,.about-panel,.research-brief-panel,.api-key-vault { overscroll-behavior:contain; }
+.sourceful-viewport-ui .api-key-vault { pointer-events:auto!important; z-index:1200!important; }
 @media (max-width:720px) {
   .result-toolbar { left:12px!important; right:12px!important; }
   .result-mode-cluster { touch-action:pan-x; overscroll-behavior-x:contain; }

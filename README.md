@@ -73,6 +73,8 @@ To run Sourceful with a shared server key, set `OPENAI_API_KEY` as a Cloud Run s
 - API responses are `no-store`; the service disables `X-Powered-By`, sends restrictive browser security headers, enforces 1 MB JSON and 4 MB upload limits, and applies a per-instance request throttle.
 - Do not treat browser encryption as protection against an untrusted browser extension or XSS. Use restricted project keys and keep deployment dependencies current.
 
+Key safety: keys are not persisted or logged by the server. “Remember key” is opt-in and encrypts it locally with AES-GCM using a passphrase that is not stored. That is reasonable for a BYOK hackathon app, but not absolute protection: browser extensions, malware, or an XSS compromise could still access an unlocked key. Users should use a dedicated, low-budget OpenAI project key—not a main organisational key. OpenAI’s official guidance remains to avoid exposing keys in browser code.
+
 ## OpenAI Build Week notes
 
 **Suggested track:** Education — Sourceful teaches researchers how to separate primary evidence, independent corroboration, and unsupported repetition.
