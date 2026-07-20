@@ -35,12 +35,19 @@ const generateLayout = (data: VerificationResult) => {
   
   const nodes: any[] = [];
   const edges: any[] = [];
+  const average = (values: number[], fallback: number) => values.length ? values.reduce((total, value) => total + value, 0) / values.length : fallback;
+  const branchProximity = (branch: Branch) => {
+    const directness = average(branch.sources.map((source) => source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45), 45);
+    const quality = average(branch.sources.map((source) => source.metrics?.evidenceQuality ?? 45), 45);
+    const credibility = average(branch.sources.map((source) => source.credibilityScore ?? 45), 45);
+    return directness * .56 + quality * .27 + credibility * .17;
+  };
   
   let currentY = 0;
   
   data.branches.forEach((branch, bIdx) => {
     const startY = currentY;
-    const branchX = CORE_W + GAP_X + (100 - branch.confidenceScore) * 1.8;
+    const branchX = CORE_W + GAP_X + (100 - branchProximity(branch)) * 1.55;
     const sourceRows = Math.max(1, Math.ceil(branch.sources.length / SOURCES_PER_ROW));
     const branchSpan = sourceRows * SOURCE_H + Math.max(0, sourceRows - 1) * GAP_Y;
     const branchY = startY + (branchSpan - BRANCH_H) / 2;
@@ -55,7 +62,7 @@ const generateLayout = (data: VerificationResult) => {
         data: source,
         branchData: branch,
         branchId: `branch-${bIdx}`,
-        x: sourceBaseX + sourceColumn * (SOURCE_W + GAP_X * .55) + (100 - (source.credibilityScore ?? 50)) * .32,
+        x: sourceBaseX + sourceColumn * (SOURCE_W + GAP_X * .55) + (100 - ((source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45) * .7 + (source.credibilityScore ?? 50) * .3)) * .34,
         y: startY + sourceRow * (SOURCE_H + GAP_Y),
         width: SOURCE_W,
         height: SOURCE_H,
@@ -338,6 +345,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
             const isDisintegrating = (node.type === 'source' && node.data.graphId === disintegratingSourceId) || (node.type === 'branch' && node.data.graphId === disintegratingClaimId);
             const fadingWithClaim = node.type === 'source' && node.branchData?.graphId === disintegratingClaimId;
             const isSelectedNode = activeLineage.has(node.id);
+            const isDirectSelection = (node.type === 'source' && node.data.graphId === selectedSourceId) || (node.type === 'branch' && node.data.graphId === selectedClaimId);
             return (
             <motion.div
               key={node.id}
@@ -355,8 +363,8 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
               }}
             >
               {node.type === 'core' && <CoreNode data={node.data} isDarkMode={isDarkMode} energized={isSelectedNode} />}
-              {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} energized={isSelectedNode} />}
-              {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isSelectedNode} />}
+              {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} energized={isSelectedNode} selected={isDirectSelection} />}
+              {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isSelectedNode} selected={isDirectSelection} />}
               {isDisintegrating && <MicroNodeBurst isDodgy={node.data.isDodgy}/>} 
             </motion.div>
             );
@@ -397,12 +405,13 @@ function CoreNode({ data, isDarkMode, energized }: { data: VerificationResult, i
   );
 }
 
-function BranchNode({ data, isDarkMode, onSelect, energized }: { data: Branch, isDarkMode: boolean, onSelect?: (claim: Branch) => void, energized?: boolean }) {
+function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data: Branch, isDarkMode: boolean, onSelect?: (claim: Branch) => void, energized?: boolean, selected?: boolean }) {
   return (
     <button type="button" onClick={() => onSelect?.(data)} title="Open confidence claim controls" className={cn(
       "w-full h-full rounded-xl border p-6 flex flex-col justify-center text-left shadow-[0_0_30px_-10px_rgba(148,163,184,0.3)] transition-colors backdrop-blur-xl relative cursor-pointer hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-amber-400/70",
       isDarkMode ? "bg-slate-800/90 border-slate-600/50" : "bg-slate-50/90 border-slate-300",
-      energized && "border-amber-300/90 ring-2 ring-amber-300/60 shadow-[0_0_44px_-4px_rgba(248,212,124,0.8)]"
+      energized && "border-amber-300/90 ring-2 ring-amber-300/60 shadow-[0_0_44px_-4px_rgba(248,212,124,0.8)]",
+      selected && "node-selected-trace"
     )}>
       <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border-4 flex items-center justify-center bg-slate-900 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]">
         <div className="w-2 h-2 rounded-full bg-blue-400" />
@@ -428,13 +437,14 @@ function BranchNode({ data, isDarkMode, onSelect, energized }: { data: Branch, i
   );
 }
 
-function SourceNode({ source, isDarkMode, onSelect, energized }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void, energized?: boolean }) {
+function SourceNode({ source, isDarkMode, onSelect, energized, selected }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void, energized?: boolean, selected?: boolean }) {
   const isDodgy = source.isDodgy;
   const stance = source.evidenceProfile?.stance || 'unclear';
   const stanceLabel = stance === 'supports' ? 'Supports claim' : stance === 'refutes' ? 'Refutes claim' : stance === 'context' ? 'Adds context' : 'Relation unclear';
   const accent = isDodgy ? 'red' : stance === 'refutes' ? 'rose' : stance === 'context' ? 'amber' : stance === 'supports' ? 'emerald' : 'blue';
   const accentStyle = accent === 'red' ? 'bg-red-500 text-red-500' : accent === 'rose' ? 'bg-rose-400 text-rose-400' : accent === 'amber' ? 'bg-amber-400 text-amber-400' : accent === 'emerald' ? 'bg-emerald-400 text-emerald-400' : 'bg-blue-500 text-blue-500';
   const badgeStyle = accent === 'red' ? 'bg-red-500/90' : accent === 'rose' ? 'bg-rose-500/90' : accent === 'amber' ? 'bg-amber-500/90' : accent === 'emerald' ? 'bg-emerald-500/90' : 'bg-blue-500/90';
+  const directSupport = stance === 'supports' && (source.evidenceProfile?.directness ?? 0) >= 90 && !isDodgy;
   
   return (
     <button onClick={() => onSelect?.(source)} className={cn(
@@ -442,7 +452,9 @@ function SourceNode({ source, isDarkMode, onSelect, energized }: { source: Sourc
       isDarkMode 
         ? (isDodgy ? "bg-slate-900/95 border-red-500/50 shadow-[0_0_40px_-10px_rgba(239,68,68,0.3)]" : "bg-slate-900/95 border-blue-500/30 shadow-[0_0_40px_-10px_rgba(59,130,246,0.2)]") 
         : (isDodgy ? "bg-white/95 border-red-400 shadow-[0_0_40px_-10px_rgba(239,68,68,0.3)]" : "bg-white/95 border-slate-300 shadow-xl"),
-      energized && "border-amber-300/90 ring-2 ring-amber-300/65 shadow-[0_0_54px_-2px_rgba(248,212,124,0.82)]"
+      energized && "border-amber-300/90 ring-2 ring-amber-300/65 shadow-[0_0_54px_-2px_rgba(248,212,124,0.82)]",
+      selected && "node-selected-trace",
+      directSupport && "direct-support-node"
     )}>
       
       {/* Glowing Edge Indicator */}
@@ -473,6 +485,7 @@ function SourceNode({ source, isDarkMode, onSelect, energized }: { source: Sourc
               <ShieldCheck size={14} /> {stanceLabel}
             </div>
           )}
+          {directSupport && <div className="bg-lime-300/90 text-slate-950 px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Direct support {source.evidenceProfile?.directness}%</div>}
           <div className="bg-slate-950/70 text-white px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Evidence {source.credibilityScore ?? '—'}</div>
         </div>
       </div>

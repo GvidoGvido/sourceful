@@ -238,3 +238,33 @@ body {
 }
 
 .dossier-links .visual-fetch-status { flex-basis:100%; color:#7aaed0; font-size:8px; letter-spacing:.045em; }
+
+/* The key vault is a true focused dialog: readable and interactive on every viewport. */
+.sourceful-viewport-ui .api-key-vault-modal { position:fixed; z-index:1400; inset:0; display:grid; place-items:center; box-sizing:border-box; padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left)); overflow:auto; pointer-events:auto; background:rgba(2,7,14,.42); }
+.sourceful-viewport-ui .api-key-vault-modal:before { position:absolute; z-index:-1; inset:0; content:""; background:radial-gradient(circle at 50% 45%,rgba(120,170,242,.18),transparent 42%),rgba(3,7,14,.2); }
+.sourceful-viewport-ui .api-key-vault-modal .api-key-vault { position:relative!important; top:auto!important; right:auto!important; bottom:auto!important; left:auto!important; box-sizing:border-box; width:min(468px,calc(100vw - 40px))!important; max-width:468px!important; max-height:min(78dvh,670px)!important; overflow-y:auto!important; padding:clamp(20px,3vw,28px)!important; transform:none!important; border:1px solid rgba(220,184,89,.43); background:linear-gradient(135deg,rgba(17,27,43,.94),rgba(7,12,21,.9)); box-shadow:0 34px 120px rgba(0,0,0,.57),0 0 64px rgba(87,147,230,.16),inset 0 1px rgba(255,255,255,.14); }
+.sourceful-viewport-ui .api-key-vault-modal .api-key-vault.dossier-light { background:linear-gradient(135deg,rgba(253,253,249,.96),rgba(240,247,255,.92)); box-shadow:0 30px 100px rgba(59,73,93,.3),0 0 54px rgba(89,139,225,.13),inset 0 1px rgba(255,255,255,.94); }
+@media (max-width:520px) { .sourceful-viewport-ui .api-key-vault-modal { align-items:center; padding:14px 12px max(14px,env(safe-area-inset-bottom)); }.sourceful-viewport-ui .api-key-vault-modal .api-key-vault { width:calc(100vw - 24px)!important; max-height:min(82dvh,680px)!important; border-radius:18px; } }
+
+/* Dossier tooltips are full-width, tap-operable callouts rather than clipped hover fragments. */
+.metric-help { position:relative; flex:0 0 auto; }
+.metric-help > span { display:block; box-sizing:border-box; left:0; bottom:calc(100% + 9px); width:min(286px,calc(100vw - 56px)); min-width:min(220px,calc(100vw - 56px)); max-width:none; white-space:normal; overflow-wrap:break-word; word-break:normal; }
+.metric-help[aria-expanded="true"] > span { opacity:1; transform:translateY(0); pointer-events:auto; }
+@media (max-width:420px) { .metric-help > span { width:calc(100vw - 56px); min-width:0; font-size:11px; } }
+
+/* Source visual metadata becomes a calm visual trace: the selected page leads, then available active-source imagery fades through. */
+.dossier-visual-carousel { position:relative; height:132px; margin:15px 0 3px; overflow:hidden; border:1px solid rgba(209,169,77,.34); border-radius:12px; background:linear-gradient(135deg,rgba(45,79,116,.2),rgba(12,17,26,.44)); box-shadow:0 15px 34px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.1); }
+.dossier-visual-carousel:before,.dossier-visual-carousel:after { position:absolute; z-index:2; right:0; left:0; height:35%; content:""; pointer-events:none; }.dossier-visual-carousel:before { top:0; background:linear-gradient(180deg,rgba(9,14,22,.56),transparent); }.dossier-visual-carousel:after { bottom:0; background:linear-gradient(0deg,rgba(9,14,22,.76),transparent); }
+.dossier-visual-carousel img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; filter:saturate(1.04) contrast(1.03); }
+.dossier-visual-dots { position:absolute; z-index:3; right:12px; bottom:10px; display:flex; gap:5px; }.dossier-visual-dots i { width:5px; height:5px; border-radius:50%; background:rgba(245,232,187,.38); box-shadow:0 0 5px rgba(0,0,0,.4); transition:width .28s ease,background .28s ease; }.dossier-visual-dots i.active { width:16px; border-radius:99px; background:#f2ca6b; box-shadow:0 0 10px rgba(242,202,107,.74); }
+.dossier-light .dossier-visual-carousel:before { background:linear-gradient(180deg,rgba(255,252,243,.46),transparent); }.dossier-light .dossier-visual-carousel:after { background:linear-gradient(0deg,rgba(255,252,243,.72),transparent); }
+
+/* Selected cards and direct-support traces are visually distinct from the separate credibility score. */
+.node-selected-trace { isolation:isolate; }.node-selected-trace:before { position:absolute; z-index:3; inset:-1px; padding:2px; border-radius:inherit; content:""; pointer-events:none; background:linear-gradient(106deg,transparent 4%,rgba(244,197,87,.14) 33%,#fff0aa 47%,#c99030 53%,rgba(244,197,87,.14) 67%,transparent 96%) 200% 0/200% 100%; -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; filter:drop-shadow(0 0 8px rgba(246,205,108,.82)); animation:selected-edge-current 2.25s linear infinite; }
+.direct-support-node { box-shadow:0 0 0 1px rgba(180,247,154,.46),0 0 52px -8px rgba(167,246,139,.5)!important; }.direct-support-node:after { position:absolute; z-index:1; inset:0; border-radius:inherit; content:""; pointer-events:none; background:radial-gradient(circle at 70% 18%,rgba(202,255,178,.19),transparent 35%); mix-blend-mode:screen; }
+@keyframes selected-edge-current { to { background-position:-200% 0; } }
+
+/* Hover previews include verified source imagery on the same plaque without competing with the quote. */
+.cosmic-preview { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; }
+.cosmic-preview-visual { position:relative; height:94px; overflow:hidden; border:1px solid rgba(237,197,98,.3); border-radius:8px; background:rgba(12,18,28,.58); }.cosmic-preview-visual:after { position:absolute; inset:0; content:""; background:linear-gradient(90deg,rgba(9,14,22,.2),transparent 40%,rgba(9,14,22,.48)),linear-gradient(0deg,rgba(9,14,22,.42),transparent 48%); pointer-events:none; }.cosmic-preview-visual img { width:100%; height:100%; object-fit:cover; filter:saturate(.96) contrast(1.04); }.cosmic-preview-copy { min-width:0; }
+@media (max-width:640px) { .cosmic-preview-visual { height:72px; }.dossier-visual-carousel { height:118px; } }

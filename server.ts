@@ -12,7 +12,8 @@ import { isIP } from 'node:net';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
 const modelRoster = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
 const researchModes = new Set(['auto', 'public_claim', 'historical', 'scripture', 'math', 'document']);
 const math = create(all, { number: 'number', precision: 64 });
@@ -33,6 +34,13 @@ const MAX_SOURCE_PAGES_PER_PASS = 24;
 
 type ResearchRoute = 'public_claim' | 'historical' | 'scripture' | 'math' | 'document';
 type MathCheck = { expression: string; kind: 'identity' | 'expression'; result: string; isTrue?: boolean; note: string } | null;
+
+const supportedUploadExtensions = new Set(['.txt', '.md', '.csv', '.json', '.pdf', '.docx', '.rtf', '.png', '.jpg', '.jpeg', '.webp']);
+const textUploadExtensions = new Set(['.txt', '.md', '.csv', '.json']);
+function uploadExtension(file: Express.Multer.File) { return path.extname(file.originalname || '').toLowerCase(); }
+function isSupportedUpload(file: Express.Multer.File) { return supportedUploadExtensions.has(uploadExtension(file)); }
+function isTextUpload(file: Express.Multer.File) { return textUploadExtensions.has(uploadExtension(file)) || file.mimetype.startsWith('text/'); }
+function uploadDataUrl(file: Express.Multer.File) { return `data:${file.mimetype || 'application/octet-stream'};base64,${file.buffer.toString('base64')}`; }
 
 function fallbackResearchRoute(text: string, requested: string, hasFile: boolean): ResearchRoute {
   if (requested !== 'auto') return requested as ResearchRoute;
@@ -390,6 +398,7 @@ async function startServer() {
     if (!text && !file) return res.status(400).json({ error: 'Text or file is required.' });
     if (!modelRoster.has(model)) return res.status(400).json({ error: 'Unsupported Sourceful model.' });
     if (!researchModes.has(requestedMode)) return res.status(400).json({ error: 'Unsupported research mode.' });
+    if (file && !isSupportedUpload(file)) return res.status(415).json({ error: 'Unsupported attachment. Use PDF, DOCX, RTF, TXT, Markdown, CSV, JSON, PNG, JPEG, or WebP (up to 8 MB).' });
     if (useDemo) return res.json(demoInvestigation(text));
     const apiKey = requestApiKey(req.body?.apiKey);
     if (!apiKey) return res.status(401).json({ error: 'Connect an OpenAI API key in Sourceful’s API vault, or configure OPENAI_API_KEY on the server.' });
@@ -397,8 +406,10 @@ async function startServer() {
       const client = new OpenAI({ apiKey });
       const route = await chooseResearchRoute(text, requestedMode, Boolean(file), client, model); const mathCheck = route === 'math' ? checkNumericMath(text) : null;
       const googleResearch = useGoogleCrosscheck ? await getGeminiResearch(text || `Assess the attached file: ${file?.originalname || 'uploaded research lead'}`) : '';
-      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${file?.mimetype.startsWith('text/') ? `\n\nAttached research lead (${file.originalname}):\n${file.buffer.toString('utf8').slice(0, 18000)}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
-      if (file?.mimetype.startsWith('image/')) content.push({ type: 'input_image', image_url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}` });
+      const textAttachment = file && isTextUpload(file) ? `\n\nAttached research lead (${file.originalname}; supplied by the user, not proof):\n${file.buffer.toString('utf8').slice(0, 18000)}` : '';
+      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${textAttachment}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
+      if (file?.mimetype.startsWith('image/')) content.push({ type: 'input_image', image_url: uploadDataUrl(file) });
+      if (file && !isTextUpload(file) && !file.mimetype.startsWith('image/')) content.push({ type: 'input_file', filename: file.originalname, file_data: uploadDataUrl(file), detail: 'auto' });
       const response = await client.responses.create({ model, instructions, input: [{ role: 'user', content }], tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...schema } } } as any);
       return res.json(await enrichEvidenceTopology(evaluateResult(JSON.parse(response.output_text), route, mathCheck)));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Verification service unavailable.') }); }
