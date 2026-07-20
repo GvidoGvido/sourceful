@@ -7,6 +7,8 @@
 
 **Live demo:** https://sourceful-167935310251.europe-west1.run.app
 
+**Repository:** https://github.com/GvidoGvido/sourceful
+
 ## What it does
 
 - Researches public claims with the **OpenAI Responses API** and native web search.
