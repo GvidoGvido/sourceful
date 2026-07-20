@@ -1,0 +1,9 @@
+{
+  "name": "Sourceful",
+  "description": "AI-powered truth sourcing and claim verification tool with a dynamic knowledge graph interface.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_OPENAI_RESPONSES_API",
+    "MAJOR_CAPABILITY_SOURCE_PROVENANCE_GRAPH"
+  ]
+}
