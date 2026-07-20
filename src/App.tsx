@@ -137,6 +137,10 @@ function ResearchBuildLoader({ isDarkMode, stage, onCancel }: { isDarkMode: bool
   </div>;
 }
 
+function InteractionToast({ message }: { message: string }) {
+  return <div className="interaction-toast-anchor" role="status" aria-live="polite"><motion.div initial={{ opacity: 0, y: 10, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 7, scale: .96 }} className="interaction-toast"><CircleCheck size={15}/><span>{message}</span></motion.div></div>;
+}
+
 type MenuOption = { value: string; label: string };
 function GlassMenu({ label, title, value, options, onChange }: { label: string; title: string; value: string; options: MenuOption[]; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false); const selected = options.find((option) => option.value === value) || options[0];
@@ -230,7 +234,9 @@ export default function App() {
   const [guideVisible, setGuideVisible] = useState(true);
   const [guideEnabled, setGuideEnabled] = useState(true);
   const [researchStage, setResearchStage] = useState('Preparing research protocol');
+  const [interactionNotice, setInteractionNotice] = useState('');
   const requestControllerRef = useRef<AbortController | null>(null);
+  const interactionNoticeTimerRef = useRef<number | null>(null);
   const [searchPanelKey, setSearchPanelKey] = useState(0);
   const demoPrompt = 'Explore a guided evidence graph: how can independent records corroborate a historical claim?';
 
@@ -257,11 +263,23 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [appState]);
 
+  useEffect(() => () => { if (interactionNoticeTimerRef.current) window.clearTimeout(interactionNoticeTimerRef.current); }, []);
+
+  const hapticTick = () => {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(8);
+  };
+  const announceInteraction = (message: string) => {
+    setInteractionNotice(message);
+    if (interactionNoticeTimerRef.current) window.clearTimeout(interactionNoticeTimerRef.current);
+    interactionNoticeTimerRef.current = window.setTimeout(() => setInteractionNotice(''), 2600);
+  };
+
   const persistArtifacts = (next: SavedArtifact[]) => { setArtifacts(next); localStorage.setItem(artifactStorageKey, JSON.stringify(next)); };
   const saveArtifact = () => {
     if (!result) return;
     const artifact: SavedArtifact = { id: crypto.randomUUID(), title: result.coreConcept.slice(0, 90), createdAt: new Date().toISOString(), query, model, result, summary: summary || undefined };
     persistArtifacts([artifact, ...artifacts].slice(0, 40));
+    announceInteraction('Knowledge graph saved to your library');
   };
   const exportEvidenceCsv = () => {
     if (!result) return;
@@ -272,6 +290,7 @@ export default function App() {
     const file = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const href = URL.createObjectURL(file); const anchor = document.createElement('a');
     anchor.href = href; anchor.download = `sourceful-evidence-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
+    announceInteraction('Evidence CSV prepared for download');
   };
   const closeViewportPanels = () => { setSelectedSource(null); setSelectedClaim(null); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false); setSummary(''); setGuideVisible(false); };
   const restoreArtifact = (artifact: SavedArtifact) => { setResult(identifyGraph(artifact.result)); setQuery(artifact.query); setModel(artifact.model); setSelectedSource(null); setSelectedClaim(null); setInfoOpen(false); setKeyVaultOpen(false); setSummary(artifact.summary || ''); setAppState('results'); setLibraryOpen(false); };
@@ -399,7 +418,7 @@ export default function App() {
   const isCenter = appState === 'idle' || appState === 'encrypting' || appState === 'loading';
 
   return (
-    <div className="min-h-screen sourceful-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-sans overflow-hidden relative selection:bg-amber-500/30 transition-colors duration-500">
+    <div className="min-h-screen sourceful-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-sans overflow-hidden relative selection:bg-amber-500/30 transition-colors duration-500" onPointerDownCapture={(event) => { if ((event.target as HTMLElement).closest('button:not(:disabled), [role="option"]')) hapticTick(); }}>
       <WindborneNodes />
       {result && (appState === 'results' || appState === 'loading') && (viewMode === '3d' ? <DiscoveryUniverse data={result} isDarkMode={isDarkMode} labelMode={labelMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceId={selectedSource?.graphId} selectedClaimId={selectedClaim?.graphId} disintegratingSourceId={disintegratingSourceId} disintegratingClaimId={disintegratingClaimId} onDisintegrationComplete={completeSourceDisintegration} /> : <NodeGraph data={result} isDarkMode={isDarkMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceId={selectedSource?.graphId} selectedClaimId={selectedClaim?.graphId} disintegratingSourceId={disintegratingSourceId} disintegratingClaimId={disintegratingClaimId} onDisintegrationComplete={completeSourceDisintegration} />)}
       {createPortal(<div className="sourceful-viewport-ui">
@@ -409,7 +428,7 @@ export default function App() {
           <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 transition-colors ${isDarkMode ? 'text-white/50 hover:text-white' : 'text-slate-500 hover:text-slate-800'}`} title="Toggle theme">{isDarkMode ? <Sun size={20} /> : <Moon size={20} />}</button>
         </div>}
         {appState === 'results' && <ResultsToolbar isDarkMode={isDarkMode} viewMode={viewMode} labelMode={labelMode} summarising={summarising} expanding={expanding} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && result.branches.reduce((total, branch) => total + branch.sources.length, 0) < (result.researchMetadata?.nodeBudget || 60))} onViewMode={setViewMode} onLabelMode={() => setLabelMode((mode) => mode === 'hover' ? 'all' : 'hover')} onSummary={generateSummary} onExpand={() => void expandInvestigation()} onSave={saveArtifact} onExport={exportEvidenceCsv} onLibrary={openLibrary} onInfo={openInfo} onTheme={() => setIsDarkMode(!isDarkMode)} onNewSearch={resetSearch}/>}
-        <AnimatePresence>{selectedSource && <SourceDossier source={selectedSource} isDarkMode={isDarkMode} onClose={() => setSelectedSource(null)} onDisintegrate={disintegrateSource} />}{selectedClaim && <ClaimDossier claim={selectedClaim} isDarkMode={isDarkMode} onClose={() => setSelectedClaim(null)} onDisintegrate={disintegrateClaim} onExpand={(claim) => void expandInvestigation(claim)} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && result.branches.reduce((total, branch) => total + branch.sources.length, 0) < (result.researchMetadata?.nodeBudget || 60))} />}{libraryOpen && <ArtifactLibrary artifacts={artifacts} isDarkMode={isDarkMode} onRestore={restoreArtifact} onRename={(id, title) => persistArtifacts(artifacts.map((artifact) => artifact.id === id ? { ...artifact, title } : artifact))} onDelete={(id) => persistArtifacts(artifacts.filter((artifact) => artifact.id !== id))} onClose={() => setLibraryOpen(false)} />}{infoOpen && <AboutPanel isDarkMode={isDarkMode} onClose={() => setInfoOpen(false)} />}{keyVaultOpen && <ApiKeyVault isDarkMode={isDarkMode} apiKey={apiKey} onUse={setApiKey} onDisconnect={() => setApiKey('')} onClose={() => setKeyVaultOpen(false)} />}{summary && <ResearchBriefPanel summary={summary} artifact={result} isDarkMode={isDarkMode} onClose={() => setSummary('')} />}{result && appState === 'results' && !summary && !selectedSource && !selectedClaim && !libraryOpen && !infoOpen && !keyVaultOpen && guideVisible && guideEnabled && <ExploreGuide viewMode={viewMode} onClose={() => setGuideVisible(false)} onDisable={() => { localStorage.setItem('sourceful-explore-guide', 'off'); setGuideEnabled(false); setGuideVisible(false); }} />}</AnimatePresence>
+        <AnimatePresence>{selectedSource && <SourceDossier source={selectedSource} isDarkMode={isDarkMode} onClose={() => setSelectedSource(null)} onDisintegrate={disintegrateSource} />}{selectedClaim && <ClaimDossier claim={selectedClaim} isDarkMode={isDarkMode} onClose={() => setSelectedClaim(null)} onDisintegrate={disintegrateClaim} onExpand={(claim) => void expandInvestigation(claim)} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && result.branches.reduce((total, branch) => total + branch.sources.length, 0) < (result.researchMetadata?.nodeBudget || 60))} />}{libraryOpen && <ArtifactLibrary artifacts={artifacts} isDarkMode={isDarkMode} onRestore={restoreArtifact} onRename={(id, title) => persistArtifacts(artifacts.map((artifact) => artifact.id === id ? { ...artifact, title } : artifact))} onDelete={(id) => persistArtifacts(artifacts.filter((artifact) => artifact.id !== id))} onClose={() => setLibraryOpen(false)} />}{infoOpen && <AboutPanel isDarkMode={isDarkMode} onClose={() => setInfoOpen(false)} />}{keyVaultOpen && <ApiKeyVault isDarkMode={isDarkMode} apiKey={apiKey} onUse={setApiKey} onDisconnect={() => setApiKey('')} onClose={() => setKeyVaultOpen(false)} />}{summary && <ResearchBriefPanel summary={summary} artifact={result} isDarkMode={isDarkMode} onClose={() => setSummary('')} />}{result && appState === 'results' && !summary && !selectedSource && !selectedClaim && !libraryOpen && !infoOpen && !keyVaultOpen && guideVisible && guideEnabled && <ExploreGuide viewMode={viewMode} onClose={() => setGuideVisible(false)} onDisable={() => { localStorage.setItem('sourceful-explore-guide', 'off'); setGuideEnabled(false); setGuideVisible(false); }} />}{interactionNotice && <InteractionToast message={interactionNotice}/>}</AnimatePresence>
       </div>, document.body)}
 
       {/* Main Content Area */}
