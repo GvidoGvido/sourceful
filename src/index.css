@@ -279,3 +279,9 @@ body {
 .cosmic-preview { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; }
 .cosmic-preview-visual { position:relative; height:94px; overflow:hidden; border:1px solid rgba(237,197,98,.3); border-radius:8px; background:rgba(12,18,28,.58); }.cosmic-preview-visual:after { position:absolute; inset:0; content:""; background:linear-gradient(90deg,rgba(9,14,22,.2),transparent 40%,rgba(9,14,22,.48)),linear-gradient(0deg,rgba(9,14,22,.42),transparent 48%); pointer-events:none; }.cosmic-preview-visual img { width:100%; height:100%; object-fit:cover; filter:saturate(.96) contrast(1.04); }.cosmic-preview-copy { min-width:0; }
 @media (max-width:640px) { .cosmic-preview-visual { height:72px; }.dossier-visual-carousel { height:118px; } }
+
+/* Keep the ambient field above opaque canvases and boards, but below all interaction chrome. */
+.windborne-nodes { position:fixed; z-index:4; }
+
+/* Extracts are a separate reading surface: scrolling them never pans the 3D field. */
+.cosmic-preview { max-height:clamp(148px,30dvh,240px); overflow-x:hidden; overflow-y:auto; overscroll-behavior-y:contain; scrollbar-gutter:stable; pointer-events:auto; }
