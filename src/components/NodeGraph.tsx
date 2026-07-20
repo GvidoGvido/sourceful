@@ -9,6 +9,8 @@ interface NodeGraphProps {
   isDarkMode: boolean;
   onSourceSelect?: (source: Source) => void;
   onClaimSelect?: (claim: Branch) => void;
+  selectedSourceUrl?: string;
+  selectedClaimText?: string;
   disintegratingSourceUrl?: string | null;
   disintegratingClaim?: string | null;
   onDisintegrationComplete?: () => void;
@@ -45,6 +47,7 @@ const generateLayout = (data: VerificationResult) => {
         type: 'source',
         data: source,
         branchData: branch,
+        branchId: `branch-${bIdx}`,
         x: branchX + BRANCH_W + GAP_X + (100 - (source.credibilityScore ?? 50)) * 1.25,
         y: currentY,
         width: SOURCE_W,
@@ -79,6 +82,8 @@ const generateLayout = (data: VerificationResult) => {
         endY: sNode.y + SOURCE_H / 2,
         isDodgy: source.isDodgy,
         stance: source.evidenceProfile?.stance,
+        fromNodeId: `branch-${bIdx}`,
+        toNodeId: `source-${bIdx}-${sIdx}`,
         animOrder: 1.5 + (bIdx * 0.5) + (sIdx * 0.2)
       });
     });
@@ -101,6 +106,8 @@ const generateLayout = (data: VerificationResult) => {
       endX: to.x + to.width / 2,
       endY: to.y + to.height / 2,
       isDodgy: false,
+      fromNodeId: from.id,
+      toNodeId: to.id,
       relation: relation.kind,
       observed: relation.kind === 'references',
       animOrder: 2.2 + relationIndex * .1
@@ -130,6 +137,8 @@ const generateLayout = (data: VerificationResult) => {
       endX: bNode.x,
       endY: bNode.y + BRANCH_H / 2,
       isDodgy: false,
+      fromNodeId: 'core',
+      toNodeId: `branch-${bIdx}`,
       animOrder: 0.5 + (bIdx * 0.5)
     });
   });
@@ -189,8 +198,20 @@ function MicroNodeBurst({ isDodgy }: { isDodgy: boolean }) {
   return <div className="board-micro-node-burst" aria-hidden="true">{Array.from({ length: 180 }, (_, index) => { const angle = index * 2.399963229728653; const radius = 80 + ((index * 23) % 143); return <motion.i key={index} className={isDodgy ? 'red' : 'blue'} initial={{ opacity: 1, x: 0, y: 0, scale: .9 }} animate={{ opacity: 0, x: Math.cos(angle) * radius, y: Math.sin(angle) * radius + 58, scale: index % 6 === 0 ? 1.25 : .08 }} transition={{ duration: .8 + (index % 9) * .06, ease: 'easeOut' }} />; })}</div>;
 }
 
-export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, disintegratingSourceUrl, disintegratingClaim, onDisintegrationComplete }: NodeGraphProps) {
+export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, selectedSourceUrl, selectedClaimText, disintegratingSourceUrl, disintegratingClaim, onDisintegrationComplete }: NodeGraphProps) {
   const { nodes, edges, bounds } = useMemo(() => generateLayout(data), [data]);
+  const selectedSourceNode = useMemo(() => selectedSourceUrl ? nodes.find((node) => node.type === 'source' && node.data.url === selectedSourceUrl) : undefined, [nodes, selectedSourceUrl]);
+  const selectedClaimNode = useMemo(() => selectedSourceNode ? nodes.find((node) => node.id === selectedSourceNode.branchId) : selectedClaimText ? nodes.find((node) => node.type === 'branch' && node.data.claim === selectedClaimText) : undefined, [nodes, selectedClaimText, selectedSourceNode]);
+  const activeLineage = useMemo(() => {
+    const lineage = new Set<string>();
+    let current = selectedSourceNode || selectedClaimNode;
+    while (current) {
+      lineage.add(current.id);
+      const parentId = current.parentId || current.branchId;
+      current = parentId ? nodes.find((node) => node.id === parentId) : undefined;
+    }
+    return lineage;
+  }, [nodes, selectedClaimNode, selectedSourceNode]);
   const boardRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number; viewX: number; viewY: number } | null>(null);
   const pointersRef = useRef(new Map<number, BoardPointer>());
@@ -238,17 +259,29 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
           <svg className="absolute overflow-visible z-0 pointer-events-none" style={{ top: 0, left: 0 }}>
             {edges.map(edge => {
               const pathColor = edge.relation === 'references' ? (isDarkMode ? '#b592ff' : '#7c3aed') : edge.relation === 'shared_publisher' ? (isDarkMode ? '#64748b' : '#64748b') : edge.isDodgy ? (isDarkMode ? '#ef4444' : '#dc2626') : edge.stance === 'refutes' ? (isDarkMode ? '#fb7185' : '#e11d48') : edge.stance === 'context' ? (isDarkMode ? '#fbbf24' : '#d97706') : edge.stance === 'supports' ? (isDarkMode ? '#5ee3ae' : '#059669') : (isDarkMode ? '#60a5fa' : '#2563eb');
+              const isActivePath = Boolean(edge.fromNodeId && edge.toNodeId && activeLineage.has(edge.fromNodeId) && activeLineage.has(edge.toNodeId));
+              const glowColor = isDarkMode ? '#f8d47c' : '#b7791f';
                 
               return (
                 <g key={edge.id}>
+                  {isActivePath && <motion.path
+                    d={`M ${edge.startX} ${edge.startY} C ${edge.startX + 150} ${edge.startY}, ${edge.endX - 150} ${edge.endY}, ${edge.endX} ${edge.endY}`}
+                    fill="transparent"
+                    stroke={glowColor}
+                    strokeWidth={18}
+                    className="opacity-55 blur-lg mix-blend-screen"
+                    initial={{ pathLength: 0, opacity: 0 }}
+                    animate={{ pathLength: 1, opacity: .55 }}
+                    transition={{ duration: .38, ease: 'easeOut' }}
+                  />}
                   {/* Glow layer */}
                   <motion.path
                     d={`M ${edge.startX} ${edge.startY} C ${edge.startX + 150} ${edge.startY}, ${edge.endX - 150} ${edge.endY}, ${edge.endX} ${edge.endY}`}
                     fill="transparent"
                     stroke={pathColor}
-                    strokeWidth={8}
+                    strokeWidth={isActivePath ? 12 : 8}
                     strokeDasharray={edge.relation ? '10 12' : undefined}
-                    className="opacity-20 blur-md mix-blend-screen"
+                    className={isActivePath ? 'opacity-55 blur-md mix-blend-screen' : 'opacity-20 blur-md mix-blend-screen'}
                     custom={edge.animOrder}
                     variants={draw}
                     initial="hidden"
@@ -258,8 +291,8 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
                   <motion.path
                     d={`M ${edge.startX} ${edge.startY} C ${edge.startX + 150} ${edge.startY}, ${edge.endX - 150} ${edge.endY}, ${edge.endX} ${edge.endY}`}
                     fill="transparent"
-                    stroke={pathColor}
-                    strokeWidth={2}
+                    stroke={isActivePath ? glowColor : pathColor}
+                    strokeWidth={isActivePath ? 3.8 : 2}
                     strokeDasharray={edge.relation ? '10 12' : undefined}
                     custom={edge.animOrder}
                     variants={draw}
@@ -269,16 +302,16 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
                   
                   {/* Animated traveling dot */}
                   <motion.circle
-                    r="4"
-                    fill={pathColor}
+                    r={isActivePath ? '5.5' : '4'}
+                    fill={isActivePath ? glowColor : pathColor}
                     custom={edge.animOrder + 1}
                     initial={{ opacity: 0 }}
-                    animate={{ opacity: [0, 1, 0] }}
+                    animate={{ opacity: isActivePath ? [0, 1, .7, 0] : [0, 1, 0] }}
                     transition={{
                       delay: edge.animOrder + 1,
-                      duration: 2,
+                      duration: isActivePath ? 1.3 : 2,
                       repeat: Infinity,
-                      repeatDelay: 3
+                      repeatDelay: isActivePath ? .55 : 3
                     }}
                   >
                     <animateMotion
@@ -296,6 +329,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
           {nodes.map(node => {
             const isDisintegrating = (node.type === 'source' && node.data.url === disintegratingSourceUrl) || (node.type === 'branch' && node.data.claim === disintegratingClaim);
             const fadingWithClaim = node.type === 'source' && node.branchData?.claim === disintegratingClaim;
+            const isSelectedNode = activeLineage.has(node.id);
             return (
             <motion.div
               key={node.id}
@@ -309,11 +343,12 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
                 top: node.y,
                 width: node.width,
                 height: node.height,
+                zIndex: isSelectedNode ? 4 : undefined,
               }}
             >
-              {node.type === 'core' && <CoreNode data={node.data} isDarkMode={isDarkMode} />}
-              {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} />}
-              {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} />}
+              {node.type === 'core' && <CoreNode data={node.data} isDarkMode={isDarkMode} energized={isSelectedNode} />}
+              {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} energized={isSelectedNode} />}
+              {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isSelectedNode} />}
               {isDisintegrating && <MicroNodeBurst isDodgy={node.data.isDodgy}/>} 
             </motion.div>
             );
@@ -324,11 +359,12 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, dis
   );
 }
 
-function CoreNode({ data, isDarkMode }: { data: VerificationResult, isDarkMode: boolean }) {
+function CoreNode({ data, isDarkMode, energized }: { data: VerificationResult, isDarkMode: boolean, energized?: boolean }) {
   return (
     <div className={cn(
       "w-full h-full rounded-2xl border p-6 flex flex-col shadow-[0_0_50px_-12px_rgba(59,130,246,0.5)] transition-colors backdrop-blur-2xl relative overflow-hidden",
-      isDarkMode ? "bg-slate-900/90 border-blue-500/50" : "bg-white/90 border-blue-400"
+      isDarkMode ? "bg-slate-900/90 border-blue-500/50" : "bg-white/90 border-blue-400",
+      energized && "ring-2 ring-amber-300/70 shadow-[0_0_58px_-3px_rgba(248,212,124,0.86)]"
     )}>
       {/* Glow orb */}
       <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl" />
@@ -353,11 +389,12 @@ function CoreNode({ data, isDarkMode }: { data: VerificationResult, isDarkMode: 
   );
 }
 
-function BranchNode({ data, isDarkMode, onSelect }: { data: Branch, isDarkMode: boolean, onSelect?: (claim: Branch) => void }) {
+function BranchNode({ data, isDarkMode, onSelect, energized }: { data: Branch, isDarkMode: boolean, onSelect?: (claim: Branch) => void, energized?: boolean }) {
   return (
     <button type="button" onClick={() => onSelect?.(data)} title="Open confidence claim controls" className={cn(
       "w-full h-full rounded-xl border p-6 flex flex-col justify-center text-left shadow-[0_0_30px_-10px_rgba(148,163,184,0.3)] transition-colors backdrop-blur-xl relative cursor-pointer hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-amber-400/70",
-      isDarkMode ? "bg-slate-800/90 border-slate-600/50" : "bg-slate-50/90 border-slate-300"
+      isDarkMode ? "bg-slate-800/90 border-slate-600/50" : "bg-slate-50/90 border-slate-300",
+      energized && "border-amber-300/90 ring-2 ring-amber-300/60 shadow-[0_0_44px_-4px_rgba(248,212,124,0.8)]"
     )}>
       <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border-4 flex items-center justify-center bg-slate-900 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]">
         <div className="w-2 h-2 rounded-full bg-blue-400" />
@@ -383,7 +420,7 @@ function BranchNode({ data, isDarkMode, onSelect }: { data: Branch, isDarkMode: 
   );
 }
 
-function SourceNode({ source, isDarkMode, onSelect }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void }) {
+function SourceNode({ source, isDarkMode, onSelect, energized }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void, energized?: boolean }) {
   const isDodgy = source.isDodgy;
   const stance = source.evidenceProfile?.stance || 'unclear';
   const stanceLabel = stance === 'supports' ? 'Supports claim' : stance === 'refutes' ? 'Refutes claim' : stance === 'context' ? 'Adds context' : 'Relation unclear';
@@ -396,7 +433,8 @@ function SourceNode({ source, isDarkMode, onSelect }: { source: Source, isDarkMo
       "w-full h-full rounded-2xl border flex flex-col shadow-2xl transition-all duration-500 overflow-hidden relative group text-left cursor-pointer hover:-translate-y-1 hover:scale-[1.015] focus:outline-none focus:ring-2 focus:ring-amber-400/70",
       isDarkMode 
         ? (isDodgy ? "bg-slate-900/95 border-red-500/50 shadow-[0_0_40px_-10px_rgba(239,68,68,0.3)]" : "bg-slate-900/95 border-blue-500/30 shadow-[0_0_40px_-10px_rgba(59,130,246,0.2)]") 
-        : (isDodgy ? "bg-white/95 border-red-400 shadow-[0_0_40px_-10px_rgba(239,68,68,0.3)]" : "bg-white/95 border-slate-300 shadow-xl")
+        : (isDodgy ? "bg-white/95 border-red-400 shadow-[0_0_40px_-10px_rgba(239,68,68,0.3)]" : "bg-white/95 border-slate-300 shadow-xl"),
+      energized && "border-amber-300/90 ring-2 ring-amber-300/65 shadow-[0_0_54px_-2px_rgba(248,212,124,0.82)]"
     )}>
       
       {/* Glowing Edge Indicator */}
