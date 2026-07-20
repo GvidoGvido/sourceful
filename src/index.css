@@ -295,3 +295,9 @@ body {
 .dossier-light .about-read-guide { background:linear-gradient(135deg,rgba(69,136,223,.08),rgba(255,248,228,.72)); border-color:rgba(88,137,200,.2); }
 .dossier-light .about-read-guide li { color:#536174; }
 .dossier-light .about-read-guide h3 { color:#3971b5; }
+
+/* A preview is an anchored plaque, not a screen-covering overlay. */
+.universe-label { width:min(260px,36vw); transform:translateY(calc(-100% - 9px)) translateZ(0); }
+.universe-label.focused:after { position:absolute; left:50%; bottom:-12px; width:1px; height:11px; content:""; background:linear-gradient(180deg,rgba(250,224,147,.9),rgba(236,189,86,.04)); box-shadow:0 0 7px rgba(245,205,111,.88); pointer-events:none; }
+.cosmic-preview { width:min(250px,32vw); }
+@media (max-width:640px) { .universe-label { width:min(178px,46vw); transform:translateY(calc(-100% - 7px)) translateZ(0); }.cosmic-preview { width:min(172px,46vw); }.universe-label.focused:after { bottom:-9px; height:8px; } }
