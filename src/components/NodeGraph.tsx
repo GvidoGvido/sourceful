@@ -26,7 +26,9 @@ const generateLayout = (data: VerificationResult) => {
   const CORE_H = 200;
   
   const BRANCH_W = 360;
-  const BRANCH_H = 180;
+  // Leaves enough room to read a short claim before its dedicated text region
+  // takes over scrolling for longer analysis.
+  const BRANCH_H = 220;
   
   const SOURCE_W = 400;
   const SOURCE_H = 430;
@@ -414,7 +416,7 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
   const balance = data.evidenceBalance;
   return (
     <button type="button" onClick={() => onSelect?.(data)} title="Open confidence claim controls" className={cn(
-      "w-full h-full rounded-xl border p-6 flex flex-col justify-center text-left shadow-[0_0_30px_-10px_rgba(148,163,184,0.3)] transition-colors backdrop-blur-xl relative cursor-pointer hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-amber-400/70",
+      "w-full h-full rounded-xl border p-6 flex flex-col text-left shadow-[0_0_30px_-10px_rgba(148,163,184,0.3)] transition-colors backdrop-blur-xl relative cursor-pointer hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-amber-400/70",
       isDarkMode ? "bg-slate-800/90 border-slate-600/50" : "bg-slate-50/90 border-slate-300",
       energized && "border-amber-300/90 ring-2 ring-amber-300/60 shadow-[0_0_44px_-4px_rgba(248,212,124,0.8)]",
       selected && "node-selected-trace",
@@ -424,14 +426,17 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
         <div className="w-2 h-2 rounded-full bg-blue-400" />
       </div>
       
-      <h3 className={cn("text-[10px] font-bold uppercase tracking-[0.15em] mb-3 flex items-center gap-2", isDarkMode ? "text-slate-400" : "text-slate-500")}>
-        <Link2 size={12} /> Supporting Claim
-      </h3>
-      <p className={cn("text-base font-medium leading-relaxed mb-4", isDarkMode ? "text-slate-200" : "text-slate-800")}>
-        {data.claim}
-      </p>
-      
-      <div className="mt-auto flex flex-wrap gap-2">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
+        <h3 className={cn("shrink-0 text-[10px] font-bold uppercase tracking-[0.15em] mb-3 flex items-center gap-2", isDarkMode ? "text-slate-400" : "text-slate-500")}>
+          <Link2 size={12} /> Supporting Claim
+        </h3>
+        <div className="branch-node-scroll" onWheel={(event) => event.stopPropagation()}>
+          <p className={cn("text-base font-medium leading-relaxed", isDarkMode ? "text-slate-200" : "text-slate-800")}>
+            {data.claim}
+          </p>
+        </div>
+
+        <div className="mt-4 shrink-0 flex flex-wrap gap-2">
          <div className={cn("inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono", 
             data.verdict === 'refuted' ? (isDarkMode ? "bg-red-500/10 border-red-500/30 text-red-300" : "bg-red-50 border-red-200 text-red-700") : data.confidenceScore > 70
               ? (isDarkMode ? "bg-green-500/10 border-green-500/30 text-green-400" : "bg-green-50 border-green-200 text-green-700")
@@ -441,6 +446,7 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
          </div>
          {typeof data.supportStrength === 'number' && !balance && <div className={cn("inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono", strongSupport ? (isDarkMode ? "bg-lime-400/10 border-lime-300/40 text-lime-200" : "bg-lime-50 border-lime-300 text-lime-800") : (isDarkMode ? "bg-slate-700/35 border-slate-500/30 text-slate-300" : "bg-slate-100 border-slate-300 text-slate-700"))}><Target size={12}/> Evidence support: {data.supportStrength}%</div>}
          {balance && <><div className={cn("inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono", isDarkMode ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-200" : "bg-emerald-50 border-emerald-300 text-emerald-800")}><Target size={12}/> Supports: {balance.support}%</div><div className={cn("inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono", isDarkMode ? "bg-rose-500/10 border-rose-400/30 text-rose-200" : "bg-rose-50 border-rose-300 text-rose-800")}><ShieldAlert size={12}/> Refutes: {balance.refutation}%</div></>}
+        </div>
       </div>
     </button>
   );

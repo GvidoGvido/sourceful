@@ -302,3 +302,9 @@ body {
 .universe-label.focused:after { position:absolute; left:50%; bottom:-10px; width:1px; height:9px; content:""; background:linear-gradient(180deg,rgba(250,224,147,.9),rgba(236,189,86,.04)); box-shadow:0 0 7px rgba(245,205,111,.88); pointer-events:none; }
 .cosmic-preview { width:min(250px,32vw); }
 @media (max-width:640px) { .universe-label { width:min(178px,46vw); transform:translateY(-50%) translateZ(0); }.cosmic-preview { width:min(172px,46vw); -webkit-overflow-scrolling:touch; scrollbar-width:thin; }.universe-label.focused:after { bottom:-8px; height:7px; } }
+
+/* Board claim cards stay fixed-size; only their reading copy scrolls. */
+.branch-node-scroll { min-height:0; flex:1 1 auto; overflow-x:hidden; overflow-y:auto; padding-right:5px; overscroll-behavior:contain; touch-action:pan-y; -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:rgba(225,183,84,.7) transparent; }
+.branch-node-scroll::-webkit-scrollbar { width:4px; }
+.branch-node-scroll::-webkit-scrollbar-track { background:transparent; }
+.branch-node-scroll::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(225,183,84,.7); }

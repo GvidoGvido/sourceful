@@ -76,13 +76,15 @@ function Orb({ nodeId, active, selected = false, lineage = false, labelMode, onF
   useEffect(() => () => { if (blurTimer.current !== null) window.clearTimeout(blurTimer.current); }, []);
   const cancelBlur = () => { if (blurTimer.current !== null) { window.clearTimeout(blurTimer.current); blurTimer.current = null; } };
   const scheduleBlur = () => { cancelBlur(); blurTimer.current = window.setTimeout(() => { setPreviewHovered(false); onFocus(null); document.body.style.cursor = 'auto'; blurTimer.current = null; }, 110); };
-  const previewFocused = active || previewHovered;
+  // A selected node owns its preview until its dossier is closed. This avoids the
+  // hover-out timer collapsing the plaque just as a reader clicks into the node.
+  const previewFocused = active || previewHovered || selected;
   const energized = hovered || previewHovered || selected;
   useFrame((state) => { if (!group.current || !visual.current) return; const appear = THREE.MathUtils.smoothstep((state.clock.elapsedTime - order * .14) / .65, 0, 1); const target = selected ? 1.07 : energized ? 1.025 : 1; if (!disintegrating) { dissolutionStart.current = null; const nextScale = Math.max(.001, appear * target); visual.current.scale.setScalar(THREE.MathUtils.lerp(visual.current.scale.x, nextScale, .16)); return; } if (dissolutionStart.current === null) dissolutionStart.current = state.clock.elapsedTime; const fade = Math.min((state.clock.elapsedTime - dissolutionStart.current) / .52, 1); visual.current.scale.setScalar(Math.max(.001, appear * target * (1 - fade))); });
   // The interactive field follows the visible orb—not its labels or the ambient glow.
   // This makes every sphere reliably targetable without stealing hover from neighbours.
   const hitRadius = size * .96;
-  const selectNode = () => { cancelBlur(); setHovered(false); setPreviewHovered(false); onFocus(null); onClick?.(); };
+  const selectNode = () => { cancelBlur(); setHovered(false); setPreviewHovered(true); onFocus(nodeId); onClick?.(); };
   return <group ref={group} position={position}>
     <group ref={visual}><EnergyAura color={color} size={size} hovered={energized} selected={selected}/>{selected && <SelectionHalo size={size}/>}<mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={selected ? '#ffe39a' : energized ? '#ffe39a' : lineage ? '#f8d47c' : color} intensity={selected ? 10.5 : energized ? 4.9 : lineage ? 2.85 : 2.3} distance={size * (selected ? 10 : 7)}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .12, 0]} style={{ pointerEvents: previewFocused ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} imageUrl={imageUrl} visible={labelMode === 'all' || selected || previewFocused} focused={previewFocused} onPreviewEnter={() => { cancelBlur(); setPreviewHovered(true); onFocus(nodeId); }} onPreviewLeave={() => { setPreviewHovered(false); scheduleBlur(); }} onPreviewSelect={selectNode}/></Html></group>
     <mesh onPointerOver={(event) => { if (disintegrating) return; event.stopPropagation(); cancelBlur(); setHovered(true); onFocus(nodeId); document.body.style.cursor = 'pointer'; }} onPointerOut={(event) => { event.stopPropagation(); setHovered(false); scheduleBlur(); }} onClick={(event) => { if (disintegrating) return; event.stopPropagation(); selectNode(); }}><sphereGeometry args={[hitRadius, 24, 24]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
