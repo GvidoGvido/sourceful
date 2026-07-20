@@ -174,6 +174,118 @@ async function safePublicUrl(value: string) {
   } catch { return null; }
 }
 
+type DiscoveryPacket = { packet: string; connectors: string[] };
+
+function connectorQuery(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 360);
+}
+
+function scalarText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+function textList(value: unknown) {
+  return Array.isArray(value) ? value.map(scalarText).filter(Boolean) : [];
+}
+
+function connectorUrl(base: string, parameters: Record<string, string>) {
+  const url = new URL(base);
+  Object.entries(parameters).forEach(([key, value]) => url.searchParams.set(key, value));
+  return url.href;
+}
+
+/**
+ * These metadata endpoints are deliberately fixed, bounded public connectors. User text is only
+ * ever passed as a URL-encoded query. Results are discovery leads for the web-search model, not
+ * evidence or automatically emitted sources.
+ */
+async function fetchTrustedJson(url: string) {
+  let current = await safePublicUrl(url);
+  for (let redirects = 0; current && redirects < 3; redirects++) {
+    try {
+      const response = await fetch(current, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3_600),
+        headers: { accept: 'application/json', 'user-agent': 'Sourceful route discovery/1.0' }
+      });
+      if (response.status >= 300 && response.status < 400) { current = await safePublicUrl(new URL(response.headers.get('location') || '', current).href); continue; }
+      const length = Number(response.headers.get('content-length') || 0);
+      if (!response.ok || length > 1_100_000 || !response.headers.get('content-type')?.includes('json')) return null;
+      const body = await response.text();
+      return body.length <= 1_100_000 ? JSON.parse(body) : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+function scholarlyLead(title: unknown, url: unknown, authors: unknown, date: unknown, venue: unknown) {
+  const cleanTitle = scalarText(title); const cleanUrl = scalarText(url);
+  if (!cleanTitle || !cleanUrl || !/^https?:\/\//.test(cleanUrl)) return '';
+  const details = [scalarText(authors), scalarText(date), scalarText(venue)].filter(Boolean).join(' · ');
+  return `- ${cleanTitle}${details ? ` (${details})` : ''}\n  ${cleanUrl}`;
+}
+
+function shouldConsultScienceIndex(query: string) {
+  return /\b(study|studies|science|scientific|clinical|health|medical|medicine|disease|vaccine|biology|chemistry|physics|climate|emission|psychology|trial|meta-analysis)\b/i.test(query);
+}
+
+function shouldConsultDataCatalog(query: string) {
+  return /\b(dataset|data set|statistics?|census|economic|economy|population|employment|crime|budget|official figures?|indicator|rate|survey)\b/i.test(query);
+}
+
+async function routeSpecificDiscovery(query: string, route: ResearchRoute): Promise<DiscoveryPacket> {
+  const lookupQuery = connectorQuery(query);
+  if (!lookupQuery || route === 'math') return { packet: '', connectors: [] };
+  const jobs: { name: string; run: () => Promise<string[]> }[] = [
+    {
+      name: 'OpenAlex scholarly index',
+      run: async () => {
+        const data: any = await fetchTrustedJson(connectorUrl('https://api.openalex.org/works', { search: lookupQuery, 'per-page': '5', select: 'id,doi,title,publication_year,authorships,primary_location' }));
+        return (data?.results || []).map((work: any) => scholarlyLead(work.title, work.doi || work.primary_location?.landing_page_url || work.id, (Array.isArray(work.authorships) ? work.authorships : []).slice(0, 3).map((entry: any) => entry.author?.display_name).filter(Boolean).join(', '), work.publication_year ? String(work.publication_year) : '', work.primary_location?.source?.display_name || '')).filter(Boolean);
+      }
+    },
+    {
+      name: 'Crossref works index',
+      run: async () => {
+        const data: any = await fetchTrustedJson(connectorUrl('https://api.crossref.org/works', { 'query.bibliographic': lookupQuery, rows: '5', select: 'DOI,title,URL,published-print,published-online,author,container-title,type' }));
+        return (data?.message?.items || []).map((work: any) => {
+          const dateParts = work['published-print']?.['date-parts']?.[0] || work['published-online']?.['date-parts']?.[0] || [];
+          const authors = (work.author || []).slice(0, 3).map((author: any) => [author.given, author.family].filter(Boolean).join(' ')).filter(Boolean).join(', ');
+          return scholarlyLead(textList(work.title)[0], work.URL || (work.DOI ? `https://doi.org/${work.DOI}` : ''), authors, dateParts.join('-'), textList(work['container-title'])[0] || work.type);
+        }).filter(Boolean);
+      }
+    }
+  ];
+  if (route === 'historical' || route === 'scripture' || route === 'document') jobs.push({
+    name: 'Library of Congress collections',
+    run: async () => {
+      const data: any = await fetchTrustedJson(connectorUrl('https://www.loc.gov/search/', { q: lookupQuery, fo: 'json', c: '5' }));
+      return (data?.results || []).map((record: any) => scholarlyLead(record.title, record.id || record.url, textList(record.contributor).slice(0, 2).join(', '), record.date || '', textList(record.original_format)[0] || 'Library of Congress record')).filter(Boolean);
+    }
+  });
+  if (shouldConsultScienceIndex(lookupQuery)) jobs.push({
+    name: 'Europe PMC research index',
+    run: async () => {
+      const data: any = await fetchTrustedJson(connectorUrl('https://www.ebi.ac.uk/europepmc/webservices/rest/search', { query: lookupQuery, format: 'json', pageSize: '5', resultType: 'core' }));
+      return (data?.resultList?.result || []).map((record: any) => scholarlyLead(record.title, record.doi ? `https://doi.org/${record.doi}` : record.pmid ? `https://europepmc.org/article/MED/${record.pmid}` : '', record.authorString, record.pubYear, record.journalTitle)).filter(Boolean);
+    }
+  });
+  if (shouldConsultDataCatalog(lookupQuery)) jobs.push({
+    name: 'Data.gov official dataset catalog',
+    run: async () => {
+      const data: any = await fetchTrustedJson(connectorUrl('https://catalog.data.gov/api/3/action/package_search', { q: lookupQuery, rows: '5' }));
+      return (data?.result?.results || []).map((record: any) => scholarlyLead(record.title, record.url || record.resources?.[0]?.url, record.organization?.title || record.author, record.metadata_created?.slice(0, 10), 'official dataset catalog')).filter(Boolean);
+    }
+  });
+  const settled = await Promise.all(jobs.map(async (job) => ({ name: job.name, leads: await job.run().catch(() => []) })));
+  const usable = settled.filter((result) => result.leads.length);
+  if (!usable.length) return { packet: '', connectors: [] };
+  return {
+    connectors: usable.map((result) => result.name),
+    packet: `Route-specific discovery metadata (untrusted leads; open the original record and verify it with web search before using it as evidence):\n${usable.map((result) => `\n${result.name}\n${result.leads.join('\n')}`).join('\n').slice(0, 17_000)}`
+  };
+}
+
 function openGraphImages(html: string, baseUrl: string) {
   const images = new Set<string>();
   const tags = html.match(/<meta\b[^>]*>/gi) || [];
@@ -224,7 +336,7 @@ function canonicalSourceUrl(value: string) {
   } catch { return ''; }
 }
 
-function observedActiveLinks(html: string, baseUrl: string, activeSources: Map<string, string>) {
+function observedPublicLinks(html: string, baseUrl: string) {
   const links = new Set<string>();
   const tags = html.match(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi) || [];
   for (const tag of tags) {
@@ -233,14 +345,34 @@ function observedActiveLinks(html: string, baseUrl: string, activeSources: Map<s
     if (!rawHref || rawHref.startsWith('#') || /^(?:mailto:|tel:|javascript:|data:)/i.test(rawHref)) continue;
     try {
       const target = canonicalSourceUrl(new URL(rawHref, baseUrl).href);
-      const activeUrl = activeSources.get(target);
-      if (activeUrl) links.add(activeUrl);
+      if (target) links.add(target);
     } catch { /* Ignore malformed outbound links. */ }
   }
-  return [...links];
+  return [...links].slice(0, 180);
 }
 
-type SourceSnapshot = { imageUrls: string[]; pageText: string; outboundActiveUrls: string[]; inspected: boolean };
+function observedActiveLinks(html: string, baseUrl: string, activeSources: Map<string, string>) {
+  return observedPublicLinks(html, baseUrl).map((target) => activeSources.get(target)).filter((target): target is string => Boolean(target));
+}
+
+const ignoredReferenceHosts = new Set(['facebook.com','twitter.com','x.com','instagram.com','linkedin.com','youtube.com','tiktok.com','pinterest.com','google.com','googleusercontent.com','doubleclick.net','googletagmanager.com']);
+function referenceFingerprint(value: string, baseUrl: string) {
+  try {
+    const target = new URL(value); const origin = new URL(baseUrl);
+    const host = target.hostname.replace(/^www\./, '').toLowerCase();
+    if (!host || host === origin.hostname.replace(/^www\./, '').toLowerCase() || ignoredReferenceHosts.has(host)) return '';
+    const cleanPath = decodeURIComponent(target.pathname).replace(/\/+$/, '').slice(0, 170);
+    if (!cleanPath || cleanPath === '/') return '';
+    if (host === 'doi.org' || host.endsWith('.doi.org')) return `doi:${cleanPath.replace(/^\//, '').toLowerCase()}`;
+    return `url:${host}${cleanPath.toLowerCase()}`;
+  } catch { return ''; }
+}
+
+function observedCitationFingerprints(html: string, baseUrl: string) {
+  return [...new Set(observedPublicLinks(html, baseUrl).map((value) => referenceFingerprint(value, baseUrl)).filter(Boolean))].slice(0, 40);
+}
+
+type SourceSnapshot = { imageUrls: string[]; pageText: string; outboundActiveUrls: string[]; referenceFingerprints: string[]; inspected: boolean };
 
 async function fetchSourceSnapshot(sourceUrl: string, activeSources: Map<string, string>): Promise<SourceSnapshot> {
   let current = await safePublicUrl(sourceUrl);
@@ -249,13 +381,13 @@ async function fetchSourceSnapshot(sourceUrl: string, activeSources: Map<string,
       const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Sourceful evidence thumbnail resolver/1.0' } });
       if (response.status >= 300 && response.status < 400) { current = await safePublicUrl(new URL(response.headers.get('location') || '', current).href); continue; }
       const length = Number(response.headers.get('content-length') || 0);
-      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return { imageUrls:[], pageText:'', outboundActiveUrls:[], inspected:true };
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return { imageUrls:[], pageText:'', outboundActiveUrls:[], referenceFingerprints:[], inspected:true };
       const html = (await response.text()).slice(0, 750_000);
       const imageUrls = (await Promise.all(openGraphImages(html, current.href).map(async (candidate) => (await safePublicUrl(candidate))?.href || ''))).filter(Boolean);
-      return { imageUrls, pageText: decodedVisibleText(html), outboundActiveUrls: observedActiveLinks(html, current.href, activeSources), inspected:true };
-    } catch { return { imageUrls:[], pageText:'', outboundActiveUrls:[], inspected:true }; }
+      return { imageUrls, pageText: decodedVisibleText(html), outboundActiveUrls: observedActiveLinks(html, current.href, activeSources), referenceFingerprints: observedCitationFingerprints(html, current.href), inspected:true };
+    } catch { return { imageUrls:[], pageText:'', outboundActiveUrls:[], referenceFingerprints:[], inspected:true }; }
   }
-  return { imageUrls:[], pageText:'', outboundActiveUrls:[], inspected:true };
+  return { imageUrls:[], pageText:'', outboundActiveUrls:[], referenceFingerprints:[], inspected:true };
 }
 
 function provenanceClusters(artifact: any) {
@@ -268,7 +400,19 @@ function provenanceClusters(artifact: any) {
   return [...groups.entries()].filter(([, urls]) => urls.length > 1).map(([host, urls]) => ({ id:`publisher:${host}`, label:`Shared publisher path · ${host}`, sourceUrls:[...new Set(urls)], basis:'publisher' as const }));
 }
 
-async function enrichEvidenceTopology(artifact: any) {
+function citationProvenanceClusters(artifact: any) {
+  const groups = new Map<string, string[]>();
+  artifact.branches.flatMap((branch: any) => branch.sources).forEach((source: any) => {
+    for (const fingerprint of source.citationFingerprints || []) groups.set(fingerprint, [...(groups.get(fingerprint) || []), source.url]);
+  });
+  return [...groups.entries()]
+    .map(([fingerprint, urls]) => [fingerprint, [...new Set(urls)]] as const)
+    .filter(([, urls]) => urls.length > 1)
+    .slice(0, 18)
+    .map(([fingerprint, urls]) => ({ id:`citation:${fingerprint}`, label:`Shared cited reference · ${fingerprint.replace(/^(?:doi:|url:)/, '').slice(0, 92)}`, sourceUrls:urls, basis:'cited_reference' as const }));
+}
+
+async function enrichEvidenceTopology(artifact: any, discoveryConnectors: string[] = []) {
   const sources = artifact.branches.flatMap((branch: any) => branch.sources.map((source: any) => ({ source, claim:branch.claim }))) as { source:any; claim:string }[];
   const activeSources = new Map<string, string>();
   sources.forEach(({ source }) => { const key = canonicalSourceUrl(source.url); if (key) activeSources.set(key, source.url); });
@@ -283,18 +427,28 @@ async function enrichEvidenceTopology(artifact: any) {
     const aligned = alignClaimExtract(snapshot.pageText, claim);
     if (aligned) { source.snippet = aligned.snippet; source.citedText = aligned.citedText; source.claimMatches = aligned.matches; }
     source.observedReferenceCount = snapshot.outboundActiveUrls.length;
+    source.citationFingerprints = snapshot.referenceFingerprints;
     for (const targetUrl of snapshot.outboundActiveUrls) {
       if (canonicalSourceUrl(source.url) === canonicalSourceUrl(targetUrl)) continue;
       const key = `${canonicalSourceUrl(source.url)}>${canonicalSourceUrl(targetUrl)}:references`;
       relations.set(key, { fromUrl:source.url, toUrl:targetUrl, kind:'references', strength:82, note:'Sourceful fetched this public page and observed a direct link to another active trace. A direct link is not automatically treated as a scholarly citation.' });
     }
   }
-  const clusters = provenanceClusters(artifact);
-  for (const cluster of clusters) {
+  const publisherClusters = provenanceClusters(artifact);
+  const citationClusters = citationProvenanceClusters(artifact);
+  const clusters = [...publisherClusters, ...citationClusters];
+  for (const cluster of publisherClusters) {
     for (let index = 1; index < cluster.sourceUrls.length; index++) {
       const fromUrl = cluster.sourceUrls[index - 1]; const toUrl = cluster.sourceUrls[index];
       const key = `${canonicalSourceUrl(fromUrl)}>${canonicalSourceUrl(toUrl)}:shared_publisher`;
       relations.set(key, { fromUrl, toUrl, kind:'shared_publisher', strength:34, note:`These traces share the publisher domain ${hostFor(fromUrl)}. This is a provenance cluster, not independent corroboration.` });
+    }
+  }
+  for (const cluster of citationClusters) {
+    for (let index = 1; index < cluster.sourceUrls.length; index++) {
+      const fromUrl = cluster.sourceUrls[index - 1]; const toUrl = cluster.sourceUrls[index];
+      const key = `${canonicalSourceUrl(fromUrl)}>${canonicalSourceUrl(toUrl)}:shared_citation`;
+      relations.set(key, { fromUrl, toUrl, kind:'shared_citation', strength:41, note:'These traces visibly link to the same external reference. It may reveal a common provenance path and should not be counted as independent corroboration.' });
     }
   }
   artifact.evidenceRelations = [...relations.values()];
@@ -304,7 +458,9 @@ async function enrichEvidenceTopology(artifact: any) {
     maxPasses: MAX_RESEARCH_PASSES,
     nodeBudget: MAX_GRAPH_SOURCES,
     sourcePagesInspected: sources.filter(({ source }) => source.contentInspected).length,
-    observedRelations: artifact.evidenceRelations.length
+    observedRelations: artifact.evidenceRelations.length,
+    discoveryConnectors: [...new Set([...(artifact.researchMetadata?.discoveryConnectors || []), ...discoveryConnectors])],
+    sharedCitationClusters: citationClusters.length
   };
   return artifact;
 }
@@ -442,12 +598,13 @@ async function startServer() {
       const client = new OpenAI({ apiKey });
       const route = await chooseResearchRoute(text, requestedMode, Boolean(file), client, model); const mathCheck = route === 'math' ? checkNumericMath(text) : null;
       const googleResearch = useGoogleCrosscheck ? await getGeminiResearch(text || `Assess the attached file: ${file?.originalname || 'uploaded research lead'}`) : '';
+      const routeDiscovery = await routeSpecificDiscovery(text || `Assess the attached file: ${file?.originalname || 'uploaded research lead'}`, route);
       const textAttachment = file && isTextUpload(file) ? `\n\nAttached research lead (${file.originalname}; supplied by the user, not proof):\n${file.buffer.toString('utf8').slice(0, 18000)}` : '';
-      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${textAttachment}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
+      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${textAttachment}${routeDiscovery.packet ? `\n\n--- Route-specific discovery packet ---\n${routeDiscovery.packet}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
       if (file?.mimetype.startsWith('image/')) content.push({ type: 'input_image', image_url: uploadDataUrl(file) });
       if (file && !isTextUpload(file) && !file.mimetype.startsWith('image/')) content.push({ type: 'input_file', filename: file.originalname, file_data: uploadDataUrl(file), detail: 'auto' });
       const response = await client.responses.create({ model, instructions, input: [{ role: 'user', content }], tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...schema } } } as any);
-      return res.json(await enrichEvidenceTopology(evaluateResult(JSON.parse(response.output_text), route, mathCheck)));
+      return res.json(await enrichEvidenceTopology(evaluateResult(JSON.parse(response.output_text), route, mathCheck), routeDiscovery.connectors));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Verification service unavailable.') }); }
   });
   app.post('/api/expand', rateLimit(6, 10 * 60_000), async (req, res) => {
@@ -467,7 +624,8 @@ async function startServer() {
       const route = researchModes.has(artifact.researchRoute) ? artifact.researchRoute as ResearchRoute : 'public_claim';
       const graphSnapshot = { coreConcept:artifact.coreConcept, biasAnalysis:artifact.biasAnalysis, researchRoute:route, branches:artifact.branches.map((branch: any) => ({ claim:branch.claim, biasAnalysis:branch.biasAnalysis, sources:branch.sources.map((source: any) => ({ title:source.title, url:source.url, snippet:source.snippet, stance:source.evidenceProfile?.stance, sourceType:source.evidenceProfile?.sourceType, evidenceType:source.evidenceProfile?.evidenceType })) })) };
       const currentGraph = JSON.stringify(graphSnapshot).slice(0, 90_000);
-      const expansionPrompt = `You are carrying out exactly one additional, bounded Sourceful evidence pass. The current graph is a lead map, not ground truth. Focus on unresolved, contested, or weakly corroborated portions${focusClaim ? `, especially: ${focusClaim}` : ''}. Use web search to find only missing, independent, high-value material. Seek the strongest credible support, refutation, and essential context where appropriate. Do not repeat URLs already in the graph; do not create links or citations you did not observe; do not add branches just to make the graph larger. Return at most 4 focused branch additions and at most 5 sources per branch. A branch may match an existing claim exactly to add evidence to it, or introduce a materially distinct sub-claim. Every source needs a real URL and an exact cited snippet.\n\n${routeProtocol(route, null)}\n\n--- Current graph ---\n${currentGraph}`;
+      const routeDiscovery = await routeSpecificDiscovery(focusClaim || artifact.coreConcept, route);
+      const expansionPrompt = `You are carrying out exactly one additional, bounded Sourceful evidence pass. The current graph is a lead map, not ground truth. Focus on unresolved, contested, or weakly corroborated portions${focusClaim ? `, especially: ${focusClaim}` : ''}. Use web search to find only missing, independent, high-value material. Seek the strongest credible support, refutation, and essential context where appropriate. Do not repeat URLs already in the graph; do not create links or citations you did not observe; do not add branches just to make the graph larger. Return at most 4 focused branch additions and at most 5 sources per branch. A branch may match an existing claim exactly to add evidence to it, or introduce a materially distinct sub-claim. Every source needs a real URL and an exact cited snippet.\n\n${routeProtocol(route, null)}${routeDiscovery.packet ? `\n\n--- Route-specific discovery packet ---\n${routeDiscovery.packet}` : ''}\n\n--- Current graph ---\n${currentGraph}`;
       const response = await client.responses.create({ model, instructions, input: expansionPrompt, tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...expansionSchema } } } as any);
       const expansion = JSON.parse(response.output_text);
       const merged = mergeExpansionArtifact(artifact, expansion);
@@ -475,7 +633,7 @@ async function startServer() {
       evaluated.researchMetadata = merged.researchMetadata;
       evaluated.evidenceRelations = artifact.evidenceRelations || [];
       evaluated.evidenceStandard = merged.evidenceStandard;
-      return res.json(await enrichEvidenceTopology(evaluated));
+      return res.json(await enrichEvidenceTopology(evaluated, routeDiscovery.connectors));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Evidence expansion service unavailable.') }); }
   });
   if (process.env.NODE_ENV !== 'production') { const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }

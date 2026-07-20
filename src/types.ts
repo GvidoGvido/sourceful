@@ -19,6 +19,8 @@ export interface Source {
   citations?: number;
   /** Links from this fetched page to another active trace. These are observed links, not assumed citations. */
   observedReferenceCount?: number;
+  /** Canonical fingerprints of public references observed on this page. They describe provenance overlap, never proof. */
+  citationFingerprints?: string[];
   semanticDepth?: number;
   verificationStatus?: 'checking' | 'verified' | 'contested';
   provider?: 'openai_web' | 'gemini_google';
@@ -29,7 +31,7 @@ export interface Source {
 export interface EvidenceRelation {
   fromUrl: string;
   toUrl: string;
-  kind: 'references' | 'shared_publisher';
+  kind: 'references' | 'shared_publisher' | 'shared_citation';
   strength: number;
   note: string;
 }
@@ -38,7 +40,7 @@ export interface ProvenanceCluster {
   id: string;
   label: string;
   sourceUrls: string[];
-  basis: 'publisher';
+  basis: 'publisher' | 'cited_reference';
 }
 
 export interface ResearchMetadata {
@@ -47,6 +49,10 @@ export interface ResearchMetadata {
   nodeBudget: number;
   sourcePagesInspected: number;
   observedRelations: number;
+  /** Public, route-aware discovery indexes queried as metadata leads during this pass. */
+  discoveryConnectors?: string[];
+  /** Shared citations are provenance clues; they must not be counted as independent corroboration. */
+  sharedCitationClusters?: number;
 }
 
 export interface EvidenceProfile {

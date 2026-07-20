@@ -101,7 +101,8 @@ const generateLayout = (data: VerificationResult) => {
   });
 
   // Secondary evidence links are kept separate from the claim tree. They appear only when
-  // Sourceful observed a direct public-page link or a shared publisher path; neither is treated as proof.
+  // Sourceful observed a direct public-page link, shared publisher path, or shared cited reference;
+  // none of these relations is treated as proof or independent corroboration.
   const canonicalSourceUrl = (value: string) => {
     try { const url = new URL(value); url.hash = ''; url.search = ''; url.pathname = url.pathname.replace(/\/+$/, '') || '/'; return url.href; } catch { return ''; }
   };
@@ -266,14 +267,14 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
   return (
     <div ref={boardRef} className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none" onWheel={(event) => { event.preventDefault(); zoomAt(view.zoom * (event.deltaY > 0 ? .84 : 1.18), event.clientX, event.clientY); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest('button, a, input, details, [data-board-control]')) return; pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); event.currentTarget.setPointerCapture(event.pointerId); if (pointersRef.current.size === 2) beginPinch(); else if (pointersRef.current.size === 1) panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y }; }} onPointerMove={(event) => { const pointer = pointersRef.current.get(event.pointerId); if (!pointer) return; pointer.x = event.clientX; pointer.y = event.clientY; const pinch = pinchRef.current; if (pinch && pointersRef.current.size === 2) { const [first, second] = [...pointersRef.current.values()]; const distance = Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)); const centerX = (first.x + second.x) / 2; const centerY = (first.y + second.y) / 2; const zoom = clampZoom(pinch.zoom * (distance / pinch.distance)); const ratio = zoom / pinch.zoom; setView({ x: pinch.localX - (pinch.localX - pinch.viewX) * ratio + centerX - pinch.centerX, y: pinch.localY - (pinch.localY - pinch.viewY) * ratio + centerY - pinch.centerY, zoom }); return; } const pan = panRef.current; if (!pan || pan.pointerId !== event.pointerId) return; setView((current) => ({ ...current, x: pan.viewX + event.clientX - pan.x, y: pan.viewY + event.clientY - pan.y })); }} onPointerUp={(event) => { pointersRef.current.delete(event.pointerId); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); panRef.current = null; pinchRef.current = null; }} onPointerCancel={(event) => { pointersRef.current.delete(event.pointerId); panRef.current = null; pinchRef.current = null; }}>
       <div className="board-zoom-controls" data-board-control onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(.12)} title="Zoom in"><Plus size={15}/></button><span>{Math.round(view.zoom * 100)}%</span><button onClick={() => changeZoom(-.12)} title="Zoom out"><Minus size={15}/></button><button onClick={fitGraph} title="Fit entire knowledge graph"><Maximize2 size={14}/></button></div>
-      <div className="board-evidence-key" data-board-control>Pass {data.researchMetadata?.completedPasses || 1}/{data.researchMetadata?.maxPasses || 4} · {data.branches.reduce((total, branch) => total + branch.sources.length, 0)}/{data.researchMetadata?.nodeBudget || 60} traces · <i/> observed source-page link</div>
+      <div className="board-evidence-key" data-board-control>Pass {data.researchMetadata?.completedPasses || 1}/{data.researchMetadata?.maxPasses || 4} · {data.branches.reduce((total, branch) => total + branch.sources.length, 0)}/{data.researchMetadata?.nodeBudget || 60} traces · <i/> observed source-page link{data.researchMetadata?.sharedCitationClusters ? ` · ${data.researchMetadata.sharedCitationClusters} shared-reference path${data.researchMetadata.sharedCitationClusters === 1 ? '' : 's'}` : ''}</div>
       <div className="board-world" style={{ transform: `translate3d(calc(-50% + ${view.x}px), calc(-50% + ${view.y}px), 0) scale(${view.zoom})` }}>
         <div className="relative pointer-events-none" style={{ width: 0, height: 0 }}>
           
           {/* Edges */}
           <svg className="absolute overflow-visible z-0 pointer-events-none" style={{ top: 0, left: 0 }}>
             {edges.map(edge => {
-              const pathColor = edge.relation === 'references' ? (isDarkMode ? '#b592ff' : '#7c3aed') : edge.relation === 'shared_publisher' ? (isDarkMode ? '#64748b' : '#64748b') : edge.isDodgy ? (isDarkMode ? '#ef4444' : '#dc2626') : edge.stance === 'refutes' ? (isDarkMode ? '#fb7185' : '#e11d48') : edge.stance === 'context' ? (isDarkMode ? '#fbbf24' : '#d97706') : edge.stance === 'supports' ? (isDarkMode ? '#5ee3ae' : '#059669') : (isDarkMode ? '#60a5fa' : '#2563eb');
+              const pathColor = edge.relation === 'references' ? (isDarkMode ? '#b592ff' : '#7c3aed') : edge.relation === 'shared_citation' ? (isDarkMode ? '#c084fc' : '#9333ea') : edge.relation === 'shared_publisher' ? (isDarkMode ? '#64748b' : '#64748b') : edge.isDodgy ? (isDarkMode ? '#ef4444' : '#dc2626') : edge.stance === 'refutes' ? (isDarkMode ? '#fb7185' : '#e11d48') : edge.stance === 'context' ? (isDarkMode ? '#fbbf24' : '#d97706') : edge.stance === 'supports' ? (isDarkMode ? '#5ee3ae' : '#059669') : (isDarkMode ? '#60a5fa' : '#2563eb');
               const isActivePath = Boolean(edge.fromNodeId && edge.toNodeId && activeLineage.has(edge.fromNodeId) && activeLineage.has(edge.toNodeId));
               const glowColor = isDarkMode ? '#f8d47c' : '#b7791f';
                 
@@ -359,12 +360,12 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
                 top: node.y,
                 width: node.width,
                 height: node.height,
-                zIndex: isSelectedNode ? 4 : undefined,
+                zIndex: isDirectSelection ? 6 : isSelectedNode ? 4 : undefined,
               }}
             >
-              {node.type === 'core' && <CoreNode data={node.data} isDarkMode={isDarkMode} energized={isSelectedNode} />}
-              {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} energized={isSelectedNode} selected={isDirectSelection} />}
-              {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isSelectedNode} selected={isDirectSelection} />}
+              {node.type === 'core' && <CoreNode data={node.data} isDarkMode={isDarkMode} energized={false} />}
+              {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} energized={isDirectSelection} selected={isDirectSelection} />}
+              {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isDirectSelection} selected={isDirectSelection} />}
               {isDisintegrating && <MicroNodeBurst isDodgy={node.data.isDodgy}/>} 
             </motion.div>
             );

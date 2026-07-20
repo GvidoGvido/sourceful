@@ -12,6 +12,7 @@
 ## What it does
 
 - Researches public claims with the **OpenAI Responses API** and native web search.
+- Adds route-aware metadata discovery from public scholarly, archival, scientific, and official-dataset indexes before the web-research pass, then requires the model to verify original records before treating them as evidence.
 - Routes work intelligently for public claims, history, scripture, maths, and uploaded documents.
 - Builds an explorable 3D discovery graph and a 2D research board with claim and source nodes.
 - Evaluates transparent evidence signals: authority, evidence quality, independence, temporal fitness, methods/corrections, corroboration, citation network, and semantic depth.
@@ -54,10 +55,15 @@ Domain diversity is a proxy rather than proof of editorial independence, and cit
 The first search is an initial pass, not a claim of exhaustive research. A live graph can be extended from the toolbar or a specific claim card. Each extension is a new OpenAI web-research pass focused on missing support, refutation, or context; it deduplicates canonical source URLs before merging results.
 
 - Sourceful caps a graph at **four total passes** and **60 source traces**, with a stricter expansion request limit, so BYOK research cannot turn into an unbounded autonomous crawler.
-- For up to 18 not-yet-inspected public source pages per pass, the server safely resolves an Open Graph thumbnail and records links to other *active* source traces. Purple dashed board arcs mean an observed page-to-page link only; they do **not** assert that the link is a scholarly citation or proof.
+- For up to 24 not-yet-inspected public source pages per pass, the server safely resolves Open Graph thumbnails, extracts a bounded visible-text candidate for the precise claim, and records links to other *active* source traces. Purple dashed board arcs mean an observed page-to-page link only; they do **not** assert that the link is a scholarly citation or proof.
+- Sourceful also stores bounded fingerprints of observed external references. When active traces share one, the board shows a separate provenance path: it is an indication of a potentially shared evidence lineage, **not** independent corroboration.
 - Sources sharing a publisher domain are stored as a provenance cluster and are not counted as independent corroboration merely because they appear more than once.
 
-This is a deliberately bounded foundation for deeper provenance work. A production-grade long-running investigation would still need a persistent job queue, source-content extraction with citation parsing, human review checkpoints, and explicit per-user cost controls.
+### Route-aware discovery adapters
+
+Before a live web-research pass, Sourceful can request a small metadata packet from public, no-key connectors appropriate to the route: **OpenAlex** and **Crossref** for scholarly leads; the **Library of Congress** search API for historical, scripture, and document routes; **Europe PMC** for science/health-shaped questions; and **Data.gov** for data/statistics-shaped questions. Each connector is time-bounded and its records are presented to GPT-5.6 as leads only. Sourceful does not treat a catalog record, DOI, citation count, or shared reference as proof—final graph sources must still be real original pages retrieved through the web-research workflow.
+
+This is a deliberately bounded foundation for deeper provenance work. A production-grade long-running investigation would still need a persistent job queue, full-text/structured citation parsers for PDFs and archives, authenticated specialist databases, human review checkpoints, and explicit per-user cost controls.
 
 ## Deploy to Google Cloud Run
 
