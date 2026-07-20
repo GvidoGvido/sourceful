@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useRef, useState } from 'react';
+import React, { useMemo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, Variants } from 'motion/react';
 import { VerificationResult, Source, Branch } from '../types';
 import { ShieldAlert, ExternalLink, ShieldCheck, Link2, Target, Activity, Minus, Plus, Maximize2 } from 'lucide-react';
@@ -20,6 +20,7 @@ type BoardPointer = { x: number; y: number };
 type PinchGesture = { distance: number; centerX: number; centerY: number; localX: number; localY: number; zoom: number; viewX: number; viewY: number };
 
 const sourceDirectness = (source: Source) => source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45;
+const readableText = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value.trim() : fallback;
 
 const generateLayout = (data: VerificationResult) => {
   const CORE_W = 380;
@@ -238,7 +239,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
   const pointersRef = useRef(new Map<number, BoardPointer>());
   const pinchRef = useRef<PinchGesture | null>(null);
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
-  const [view, setView] = useState({ x: 0, y: 0, zoom: .35 });
+  const [view, setView] = useState({ x: 0, y: 0, zoom: .2 });
   const fitInset = { horizontal: 72, top: 86, bottom: 76 };
   const fitZoom = boardSize.width && boardSize.height ? Math.max(.025, Math.min((boardSize.width - fitInset.horizontal * 2) / bounds.width, (boardSize.height - fitInset.top - fitInset.bottom) / bounds.height)) : .2;
   const minZoom = Math.max(.025, Math.min(.12, fitZoom * .55));
@@ -261,12 +262,21 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
     pinchRef.current = { distance: Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)), centerX, centerY, localX: centerX - rect.left - rect.width / 2, localY: centerY - rect.top - rect.height / 2, zoom: view.zoom, viewX: view.x, viewY: view.y };
     panRef.current = null;
   };
-  useEffect(() => {
+  // Measure before paint. The previous default 35% world was visible for a frame before
+  // ResizeObserver delivered its first value, which made restored graphs look as if the core
+  // had vanished or cards had detached from their content.
+  useLayoutEffect(() => {
     const element = boardRef.current; if (!element) return;
-    const observer = new ResizeObserver(([entry]) => setBoardSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
-    observer.observe(element); return () => observer.disconnect();
+    const measure = () => {
+      const rect = element.getBoundingClientRect();
+      setBoardSize({ width: rect.width, height: rect.height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
-  useEffect(() => { if (boardSize.width && boardSize.height) fitGraph(); }, [data, boardSize.width, boardSize.height]);
+  useLayoutEffect(() => { if (boardSize.width && boardSize.height) fitGraph(); }, [data, boardSize.width, boardSize.height]);
   useEffect(() => { if ((!disintegratingSourceId && !disintegratingClaimId) || !onDisintegrationComplete) return; const timer = window.setTimeout(onDisintegrationComplete, 1320); return () => window.clearTimeout(timer); }, [disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete]);
   
   return (
@@ -357,9 +367,11 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
               key={node.id}
               custom={node.animOrder}
               variants={nodeAnim}
-              initial="hidden"
+              // Board cards are a stable reading surface. They must not start shrunken or
+              // transparent every time the board remounts from the library or a view switch.
+              initial={false}
               animate={isDisintegrating ? { opacity: 0, scale: .04, filter: 'blur(18px)' } : fadingWithClaim ? { opacity: 0, scale: .5, filter: 'blur(13px)' } : 'visible'}
-              className="absolute pointer-events-auto origin-center"
+              className="board-card absolute pointer-events-auto origin-center"
               style={{
                 left: node.x,
                 top: node.y,
@@ -382,6 +394,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
 }
 
 function CoreNode({ data, isDarkMode, energized }: { data: VerificationResult, isDarkMode: boolean, energized?: boolean }) {
+  const coreText = readableText(data.coreConcept, 'Untitled research question');
   return (
     <div className={cn(
       "w-full h-full rounded-2xl border p-6 flex flex-col shadow-[0_0_50px_-12px_rgba(59,130,246,0.5)] transition-colors backdrop-blur-2xl relative overflow-hidden",
@@ -398,7 +411,7 @@ function CoreNode({ data, isDarkMode, energized }: { data: VerificationResult, i
         </h2>
         <div className="core-node-copy custom-scrollbar" onWheel={(event) => event.stopPropagation()}>
           <p className={cn("font-serif leading-[1.18]", isDarkMode ? "text-white" : "text-slate-900")}>
-            {data.coreConcept}
+            {coreText}
           </p>
         </div>
         <div className="mt-3 flex shrink-0 items-center gap-4">
@@ -414,6 +427,7 @@ function CoreNode({ data, isDarkMode, energized }: { data: VerificationResult, i
 function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data: Branch, isDarkMode: boolean, onSelect?: (claim: Branch) => void, energized?: boolean, selected?: boolean }) {
   const strongSupport = (data.supportStrength ?? 0) >= 80 && data.verdict !== 'contested' && data.verdict !== 'refuted';
   const balance = data.evidenceBalance;
+  const claimText = readableText(data.claim, readableText(data.biasAnalysis, 'This saved claim has no recoverable wording. Open its dossier to inspect the linked evidence.'));
   return (
     <button type="button" onClick={() => onSelect?.(data)} title="Open confidence claim controls" className={cn(
       "w-full h-full rounded-xl border p-6 flex flex-col text-left shadow-[0_0_30px_-10px_rgba(148,163,184,0.3)] transition-colors backdrop-blur-xl relative cursor-pointer hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-amber-400/70",
@@ -432,7 +446,7 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
         </h3>
         <div className="branch-node-scroll" onWheel={(event) => event.stopPropagation()}>
           <p className={cn("text-base font-medium leading-relaxed", isDarkMode ? "text-slate-200" : "text-slate-800")}>
-            {data.claim}
+            {claimText}
           </p>
         </div>
 

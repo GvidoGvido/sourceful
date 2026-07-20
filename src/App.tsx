@@ -42,22 +42,40 @@ function metricTrace(key: string, source: Source, profile?: Source['evidenceProf
 
 type SavedArtifact = { id: string; title: string; createdAt: string; query: string; model: string; result: VerificationResult; summary?: string };
 const artifactStorageKey = 'sourceful-research-library-v1';
+const savedText = (...values: unknown[]) => values.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() || '';
 
 // URLs and claim wording are evidence attributes, not unique graph keys. One source can
 // legitimately inform two branches, so the interactive graph always receives its own IDs.
 function identifyGraph(result: VerificationResult): VerificationResult {
   const usedBranchIds = new Set<string>();
   const usedSourceIds = new Set<string>();
+  const legacyResult = result as VerificationResult & Record<string, unknown>;
+  const savedBranches = Array.isArray(legacyResult.branches) ? legacyResult.branches : [];
   return {
     ...result,
-    branches: result.branches.map((branch, branchIndex) => {
+    coreConcept: savedText(legacyResult.coreConcept, legacyResult.query, legacyResult.title) || 'Untitled research question',
+    branches: savedBranches.map((branch, branchIndex) => {
+      const legacyBranch = branch as Branch & Record<string, unknown>;
+      const savedSources = Array.isArray(legacyBranch.sources) ? legacyBranch.sources : [];
+      // Earlier locally saved research may predate the current branch-card schema. Preserve
+      // the best available wording instead of rendering an empty card on the board.
+      const claim = savedText(
+        legacyBranch.claim,
+        legacyBranch.subClaim,
+        legacyBranch.statement,
+        legacyBranch.proposition,
+        legacyBranch.title,
+        legacyBranch.biasAnalysis,
+        (savedSources[0] as Source | undefined)?.citedText
+      ) || 'Unlabelled saved claim';
       let branchId = branch.graphId || `branch-${branchIndex}`;
       if (usedBranchIds.has(branchId)) branchId = `branch-${branchIndex}-${usedBranchIds.size}`;
       usedBranchIds.add(branchId);
       return {
         ...branch,
+        claim,
         graphId: branchId,
-        sources: branch.sources.map((source, sourceIndex) => {
+        sources: savedSources.map((source, sourceIndex) => {
           let sourceId = source.graphId || `${branchId}:source-${sourceIndex}`;
           if (usedSourceIds.has(sourceId)) sourceId = `${branchId}:source-${sourceIndex}-${usedSourceIds.size}`;
           usedSourceIds.add(sourceId);
@@ -313,7 +331,13 @@ export default function App() {
   }, [isDarkMode]);
 
   useEffect(() => {
-    try { setArtifacts(JSON.parse(localStorage.getItem(artifactStorageKey) || '[]')); } catch { setArtifacts([]); }
+    try {
+      const stored = JSON.parse(localStorage.getItem(artifactStorageKey) || '[]');
+      const repaired = Array.isArray(stored) ? stored.filter((artifact): artifact is SavedArtifact => Boolean(artifact?.result)).map((artifact) => ({ ...artifact, result: identifyGraph(artifact.result) })) : [];
+      setArtifacts(repaired);
+      // Keep the migrated representation so a repaired saved board stays repaired next time.
+      if (Array.isArray(stored)) localStorage.setItem(artifactStorageKey, JSON.stringify(repaired));
+    } catch { setArtifacts([]); }
     setGuideEnabled(localStorage.getItem('sourceful-explore-guide') !== 'off');
   }, []);
 
