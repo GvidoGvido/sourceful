@@ -19,6 +19,8 @@ interface NodeGraphProps {
 type BoardPointer = { x: number; y: number };
 type PinchGesture = { distance: number; centerX: number; centerY: number; localX: number; localY: number; zoom: number; viewX: number; viewY: number };
 
+const sourceDirectness = (source: Source) => source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45;
+
 const generateLayout = (data: VerificationResult) => {
   const CORE_W = 380;
   const CORE_H = 200;
@@ -37,7 +39,7 @@ const generateLayout = (data: VerificationResult) => {
   const edges: any[] = [];
   const average = (values: number[], fallback: number) => values.length ? values.reduce((total, value) => total + value, 0) / values.length : fallback;
   const branchProximity = (branch: Branch) => {
-    const directness = average(branch.sources.map((source) => source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45), 45);
+    const directness = average(branch.sources.map(sourceDirectness), 45);
     const quality = average(branch.sources.map((source) => source.metrics?.evidenceQuality ?? 45), 45);
     const credibility = average(branch.sources.map((source) => source.credibilityScore ?? 45), 45);
     const compoundedPath = Math.max(branch.evidenceBalance?.support ?? 0, branch.evidenceBalance?.refutation ?? 0);
@@ -63,7 +65,7 @@ const generateLayout = (data: VerificationResult) => {
         data: source,
         branchData: branch,
         branchId: `branch-${bIdx}`,
-        x: sourceBaseX + sourceColumn * (SOURCE_W + GAP_X * .55) + (100 - ((source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45) * .7 + (source.credibilityScore ?? 50) * .3)) * .34,
+        x: sourceBaseX + sourceColumn * (SOURCE_W + GAP_X * .55) + (100 - (sourceDirectness(source) * .7 + (source.credibilityScore ?? 50) * .3)) * .34,
         y: startY + sourceRow * (SOURCE_H + GAP_Y),
         width: SOURCE_W,
         height: SOURCE_H,
@@ -451,7 +453,8 @@ function SourceNode({ source, isDarkMode, onSelect, energized, selected }: { sou
   const accent = isDodgy ? 'red' : stance === 'refutes' ? 'rose' : stance === 'context' ? 'amber' : stance === 'supports' ? 'emerald' : 'blue';
   const accentStyle = accent === 'red' ? 'bg-red-500 text-red-500' : accent === 'rose' ? 'bg-rose-400 text-rose-400' : accent === 'amber' ? 'bg-amber-400 text-amber-400' : accent === 'emerald' ? 'bg-emerald-400 text-emerald-400' : 'bg-blue-500 text-blue-500';
   const badgeStyle = accent === 'red' ? 'bg-red-500/90' : accent === 'rose' ? 'bg-rose-500/90' : accent === 'amber' ? 'bg-amber-500/90' : accent === 'emerald' ? 'bg-emerald-500/90' : 'bg-blue-500/90';
-  const directSupport = stance === 'supports' && (source.evidenceProfile?.directness ?? 0) >= 90 && !isDodgy;
+  const directness = sourceDirectness(source);
+  const directSupport = stance === 'supports' && directness >= 90 && !isDodgy;
   
   return (
     <button onClick={() => onSelect?.(source)} className={cn(
@@ -492,7 +495,7 @@ function SourceNode({ source, isDarkMode, onSelect, energized, selected }: { sou
               <ShieldCheck size={14} /> {stanceLabel}
             </div>
           )}
-          {directSupport && <div className="bg-lime-300/90 text-slate-950 px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Direct support {source.evidenceProfile?.directness}%</div>}
+          {directSupport && <div className="bg-lime-300/90 text-slate-950 px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Direct support {directness}%</div>}
           <div className="bg-slate-950/70 text-white px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Evidence {source.credibilityScore ?? '—'}</div>
           {source.credibilityPath && <div className="bg-amber-200/90 text-slate-950 px-2.5 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Path {source.credibilityPath.compoundedContribution}%</div>}
           {source.isDemoVisual && <div className="bg-slate-950/78 text-amber-100 px-2.5 py-1.5 rounded-full text-[9px] font-bold tracking-wider uppercase shadow-lg backdrop-blur-md">Guided illustration</div>}

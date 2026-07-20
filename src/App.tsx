@@ -26,6 +26,7 @@ const metricExplanations: Record<string, string> = {
 };
 
 function metricTrace(key: string, source: Source, profile?: Source['evidenceProfile']) {
+  const calibratedDirectness = source.credibilityPath?.directness ?? profile?.directness;
   const labels: Record<string, string> = {
     authority: profile?.sourceType ? `Observed source class: ${profile.sourceType.replaceAll('_', ' ')}${profile.authorNamed ? '; author is named.' : '; author attribution is not confirmed.'}` : 'Source class and author attribution are being assessed from the returned research record.',
     evidenceQuality: profile?.evidenceType ? `Returned evidence type: ${profile.evidenceType.replaceAll('_', ' ')}. The source excerpt is judged for directness to this claim.` : 'Evidence type is inferred from the returned source excerpt.',
@@ -34,7 +35,7 @@ function metricTrace(key: string, source: Source, profile?: Source['evidenceProf
     transparency: profile ? `${profile.authorNamed ? 'Named author' : 'Author not confirmed'} · ${profile.methodologyVisible ? 'methodology visible' : 'methodology not visible'} · ${profile.correctionsVisible ? 'corrections policy visible' : 'corrections policy not visible'} · ${profile.citedReferenceCount ?? 0} cited references.` : 'Authorship, methodology, corrections, and cited references are being assessed when present.',
     corroboration: `${source.citations ?? 0} linked citations were returned for this trace. Agreement from a single origin remains a single evidentiary path.`,
     citationNetwork: profile ? `${profile.citedReferenceCount ?? 0} cited references were visible in the returned source profile.` : `${source.citations ?? 0} linked citations were returned with this source.`,
-    semanticDepth: typeof profile?.directness === 'number' ? `Extract directness: ${profile.directness}/100. The claim and quote are compared for evidential relevance.` : 'Directness is estimated from the relationship between the retrieved extract and this claim.'
+    semanticDepth: typeof calibratedDirectness === 'number' ? `Calibrated extract directness: ${calibratedDirectness}/100. The initial extractor observation is capped against exact claim terms recovered from the returned passage.` : 'Directness is estimated from the relationship between the retrieved extract and this claim.'
   };
   return labels[key] || 'This signal is calculated from the returned source record and its position in the active evidence graph.';
 }
@@ -170,7 +171,7 @@ function SourceDossier({ source, isDarkMode, onClose, onDisintegrate }: { source
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [openMetric, setOpenMetric] = useState<string | null>(null);
   const fallback = { authority: 72, evidenceQuality: 78, independence: 74, recency: 68, transparency: 76, corroboration: 70, citationNetwork: 66, semanticDepth: 81 };
-  const metrics = source.metrics || fallback;
+  const metrics = { ...fallback, ...source.metrics, ...(source.credibilityPath ? { semanticDepth: source.credibilityPath.directness } : {}) };
   const profile = source.evidenceProfile;
   const hasThumbnail = Boolean(source.imageUrl && !thumbnailFailed);
   const sourceHost = (() => {
@@ -188,7 +189,7 @@ function SourceDossier({ source, isDarkMode, onClose, onDisintegrate }: { source
     <SourceVisualCarousel source={source}/>
     {source.credibilityPath && <section className="credibility-path-panel"><div><span><Network size={13}/> Credibility path</span><b>{source.credibilityPath.compoundedContribution}% contribution</b></div><p>{source.credibilityPath.provenanceGroup}. The score is a bounded evidence contribution to this claim—not a probability that the claim is true.</p><dl><div><dt>Source quality</dt><dd>{source.credibilityPath.sourceQuality}/100</dd></div><div><dt>Claim relevance</dt><dd>{source.credibilityPath.claimRelevance}/100</dd></div><div><dt>Directness</dt><dd>{source.credibilityPath.directness}/100</dd></div><div><dt>Independence</dt><dd>{source.credibilityPath.independence}/100</dd></div></dl></section>}
     {profile && <div className="evidence-profile"><div><span>Evidence class</span><b>{profile.evidenceType.replaceAll('_', ' ')}</b></div><div><span>Claim relation</span><b className={profile.stance}>{profile.stance}</b></div><div><span>Source class</span><b>{profile.sourceType.replaceAll('_', ' ')}</b></div><p>Scored from extracted evidence attributes; not a publisher reputation label.</p></div>}
-    <details className="source-trace-details"><summary>Source trace & observed signals <ChevronDown size={13}/></summary><dl><div><dt>Original link</dt><dd><a href={source.url} target="_blank" rel="noreferrer">{sourceHost}<ArrowRight size={11}/></a></dd></div><div><dt>Claim terms recovered</dt><dd>{source.claimMatches?.length ? source.claimMatches.join(' · ') : source.contentInspected ? 'No multi-term page extract recovered' : 'Not fetched yet'}</dd></div><div><dt>Returned citations</dt><dd>{source.citations ?? 'Not indexed'}</dd></div><div><dt>Observed active links</dt><dd>{typeof source.observedReferenceCount === 'number' ? `${source.observedReferenceCount} linked traces` : 'Not fetched yet'}</dd></div><div><dt>Observed reference paths</dt><dd>{source.citationFingerprints?.length ? `${source.citationFingerprints.length} external reference fingerprints` : source.contentInspected ? 'No qualifying shared-reference path observed' : 'Not fetched yet'}</dd></div><div><dt>Directness</dt><dd>{typeof profile?.directness === 'number' ? `${profile.directness}/100` : 'Being assessed'}</dd></div><div><dt>Provider</dt><dd>{source.provider === 'gemini_google' ? 'Google-grounded lead' : 'OpenAI web discovery'}</dd></div></dl></details>
+    <details className="source-trace-details"><summary>Source trace & observed signals <ChevronDown size={13}/></summary><dl><div><dt>Original link</dt><dd><a href={source.url} target="_blank" rel="noreferrer">{sourceHost}<ArrowRight size={11}/></a></dd></div><div><dt>Claim terms recovered</dt><dd>{source.claimMatches?.length ? source.claimMatches.join(' · ') : source.contentInspected ? 'No multi-term page extract recovered' : 'Not fetched yet'}</dd></div><div><dt>Returned citations</dt><dd>{source.citations ?? 'Not indexed'}</dd></div><div><dt>Observed active links</dt><dd>{typeof source.observedReferenceCount === 'number' ? `${source.observedReferenceCount} linked traces` : 'Not fetched yet'}</dd></div><div><dt>Observed reference paths</dt><dd>{source.citationFingerprints?.length ? `${source.citationFingerprints.length} external reference fingerprints` : source.contentInspected ? 'No qualifying shared-reference path observed' : 'Not fetched yet'}</dd></div><div><dt>Directness</dt><dd>{typeof source.credibilityPath?.directness === 'number' ? `${source.credibilityPath.directness}/100 · calibrated against recovered claim terms` : typeof profile?.directness === 'number' ? `${profile.directness}/100 · extractor observation` : 'Being assessed'}</dd></div><div><dt>Provider</dt><dd>{source.provider === 'gemini_google' ? 'Google-grounded lead' : 'OpenAI web discovery'}</dd></div></dl></details>
     <div className="dossier-section-title"><Network size={14}/> Verification lattice <span>LIVE TRACE</span></div>
     <div className="dossier-metrics">{Object.entries(metrics).map(([key, value], index) => <motion.div key={key} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * .08 }} className="metric-row"><div className="metric-header"><span className="metric-label">{metricNames[key]}<button type="button" className="metric-help" aria-label={`Explain ${metricNames[key]}`} aria-expanded={openMetric === key} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpenMetric((current) => current === key ? null : key); }}><Info size={11}/><span role="tooltip">{metricExplanations[key]}</span></button></span><b>{value}<small>/100</small></b></div><div className="metric-track"><motion.i initial={{ width: 0 }} animate={{ width: `${value}%` }} transition={{ delay: .35 + index * .08, duration: .7 }} /></div><em><CircleCheck size={12}/> {value > 74 ? 'corroborated' : value > 55 ? 'contextual review' : 'needs inquiry'}</em><details className="metric-details"><summary>Why this signal <ChevronDown size={11}/></summary><p>{metricTrace(key, source, profile)}</p></details></motion.div>)}</div>
     <div className="dossier-footer"><span>{source.citations ?? '—'} downstream citations indexed</span><a href={source.url} target="_blank" rel="noreferrer">Read original <ArrowRight size={14}/></a></div>
@@ -205,6 +206,28 @@ function ResearchBriefPanel({ summary, artifact, isDarkMode, onClose }: { summar
   const canonicalUrl = (value: string) => { try { const url = new URL(value); url.hash = ''; url.search = ''; url.pathname = url.pathname.replace(/\/+$/, '') || '/'; return url.href; } catch { return value; } };
   const sources = artifact?.branches.flatMap((branch) => branch.sources) || [];
   const sourceByUrl = new Map(sources.map((source) => [canonicalUrl(source.url), source]));
+  const sourceTracesByUrl = new Map<string, Source[]>();
+  sources.forEach((source) => {
+    const key = canonicalUrl(source.url);
+    sourceTracesByUrl.set(key, [...(sourceTracesByUrl.get(key) || []), source]);
+  });
+  const graphLedger = [...sourceTracesByUrl.entries()].map(([url, traces]) => {
+    const credibilityScores = traces.map((trace) => trace.credibilityScore).filter((score): score is number => typeof score === 'number');
+    const pathScores = traces.map((trace) => trace.credibilityPath?.compoundedContribution).filter((score): score is number => typeof score === 'number');
+    return {
+      url,
+      title: traces[0]?.title || url,
+      credibility: credibilityScores.length ? Math.round(credibilityScores.reduce((total, score) => total + score, 0) / credibilityScores.length) : null,
+      contribution: pathScores.length ? Math.round(pathScores.reduce((total, score) => total + score, 0) / pathScores.length) : null,
+      branches: traces.length
+    };
+  }).sort((left, right) => (right.credibility ?? -1) - (left.credibility ?? -1));
+  const graphLedgerGroups = [
+    { id: 'high', label: 'High credibility · 80–100', entries: graphLedger.filter((entry) => (entry.credibility ?? -1) >= 80) },
+    { id: 'established', label: 'Established · 60–79', entries: graphLedger.filter((entry) => (entry.credibility ?? -1) >= 60 && (entry.credibility ?? -1) < 80) },
+    { id: 'scrutiny', label: 'Needs scrutiny · 0–59', entries: graphLedger.filter((entry) => entry.credibility !== null && entry.credibility < 60) },
+    { id: 'unrated', label: 'Score unavailable', entries: graphLedger.filter((entry) => entry.credibility === null) }
+  ].filter((group) => group.entries.length);
   const interceptedLinks = (artifact?.evidenceRelations || []).filter((relation) => relation.kind === 'references').map((relation) => {
     const from = sourceByUrl.get(canonicalUrl(relation.fromUrl)); const to = sourceByUrl.get(canonicalUrl(relation.toUrl));
     const scores = [from?.credibilityScore, to?.credibilityScore].filter((score): score is number => typeof score === 'number');
@@ -218,6 +241,11 @@ function ResearchBriefPanel({ summary, artifact, isDarkMode, onClose }: { summar
         <div className="dossier-topline"><span><Sparkles size={14}/> Research briefing</span><button onClick={onClose} title="Close briefing"><X size={17}/></button></div>
         <p>{summary}</p>
         {(discoveryConnectors.length || sharedReferencePaths.length) ? <section className="brief-link-ledger"><div><Network size={13}/><span>Research provenance</span><small>{sharedReferencePaths.length} shared-reference path{sharedReferencePaths.length === 1 ? '' : 's'}</small></div>{discoveryConnectors.length ? <p>Route-aware metadata leads consulted: {discoveryConnectors.join(' · ')}. These are discovery aids, not evidence by themselves.</p> : null}{sharedReferencePaths.length ? <p>{sharedReferencePaths.length} active-source connection{sharedReferencePaths.length === 1 ? '' : 's'} share an observed external reference. Treat this as possible common provenance, not independent corroboration.</p> : null}</section> : null}
+        <section className="brief-link-ledger brief-source-ledger">
+          <div><Network size={13}/><span>Graph source ledger</span><small>{graphLedger.length} unique source link{graphLedger.length === 1 ? '' : 's'}</small></div>
+          <p>Every source URL currently involved in the graph, grouped by its displayed credibility score. A credibility score evaluates the trace, not whether its claim is true.</p>
+          {graphLedgerGroups.map((group) => <section className="brief-credibility-group" key={group.id}><h3>{group.label}<small>{group.entries.length} link{group.entries.length === 1 ? '' : 's'}</small></h3><ol>{group.entries.map((entry) => <li key={entry.url}><a href={entry.url} target="_blank" rel="noreferrer">{entry.title}</a><b>{entry.credibility === null ? 'credibility unavailable' : `credibility ${entry.credibility}%`}{entry.contribution === null ? '' : ` · average path contribution ${entry.contribution}%`}{entry.branches > 1 ? ` · appears in ${entry.branches} branches` : ''}</b></li>)}</ol></section>)}
+        </section>
         <section className="brief-link-ledger">
           <div><Network size={13}/><span>Intercepted source links</span><small>{interceptedLinks.length} observed</small></div>
           {interceptedLinks.length ? <ol>{interceptedLinks.map((link, index) => <li key={`${link.fromUrl}-${link.toUrl}-${index}`}><a href={link.fromUrl} target="_blank" rel="noreferrer">{link.fromTitle}</a><span>→</span><a href={link.toUrl} target="_blank" rel="noreferrer">{link.toTitle}</a><b>{link.averageConfidence === null ? 'source confidence unavailable' : `average source confidence ${link.averageConfidence}%`}</b></li>)}</ol> : <p>No direct page-to-page links between active traces were intercepted in this pass.</p>}

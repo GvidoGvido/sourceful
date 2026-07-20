@@ -436,6 +436,18 @@ function claimRelevance(source: any, claim: string) {
   return clamp(18 + (Math.min(terms.length, matched.size) / terms.length) * 82);
 }
 
+// The extractor's first-pass directness observation is useful, but it must not be
+// shown as a free-standing score. Once a page has been inspected, cap it by the
+// actual overlap between the active claim and the recovered passage. This keeps a
+// polished but tangential source from looking "direct" merely because it was
+// initially described that way by the model.
+function calibratedDirectness(source: any, relevance: number) {
+  const observed = clamp(source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 40);
+  const recoveredTerms = new Set((source.claimMatches || []).map((term: string) => String(term).toLowerCase())).size;
+  const inspectionAllowance = source.contentInspected ? (recoveredTerms >= 2 ? 12 : 4) : 7;
+  return clamp(Math.min(observed, relevance + inspectionAllowance));
+}
+
 function compoundedEvidenceScore(artifact: any, clusters: any[]) {
   const allSources = artifact.branches.flatMap((branch: any) => branch.sources);
   const componentByUrl = provenanceComponents(allSources, clusters);
@@ -451,12 +463,15 @@ function compoundedEvidenceScore(artifact: any, clusters: any[]) {
       const metrics = source.metrics || {};
       const sourceQuality = clamp(source.credibilityScore ?? ((metrics.authority || 35) * .34 + (metrics.evidenceQuality || 20) * .38 + (metrics.transparency || 20) * .18 + (metrics.citationNetwork || 0) * .10));
       const relevance = claimRelevance(source, branch.claim);
-      const directness = clamp(source.evidenceProfile?.directness ?? metrics.semanticDepth ?? 40);
+      const directness = calibratedDirectness(source, relevance);
       const independence = clamp(metrics.independence ?? 45);
       // A geometric mean keeps a single weak link visible: strong credentials cannot compensate for an irrelevant or derivative passage.
       const contribution = clamp(Math.pow((sourceQuality / 100) * (relevance / 100) * (directness / 100) * (independence / 100), .25) * 100);
       const sourceKey = canonicalSourceUrl(source.url); const provenanceGroup = componentByUrl.get(sourceKey) || 'Independent path';
       source.credibilityPath = { sourceQuality, claimRelevance: relevance, directness, independence, compoundedContribution: contribution, provenanceGroup };
+      // Keep the presentation metric in sync with the calibrated evidence path;
+      // retain evidenceProfile.directness as the raw extractor observation for audit.
+      source.metrics = { ...metrics, semanticDepth: directness };
       const bucket = groups.get(provenanceGroup) || { support:[], refute:[], context:[], primarySupport:false };
       const stance = source.evidenceProfile?.stance || 'unclear';
       if (stance === 'supports') { bucket.support.push(contribution); if (['primary','official_record','academic'].includes(source.evidenceProfile?.sourceType)) bucket.primarySupport = true; }

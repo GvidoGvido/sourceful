@@ -6,11 +6,11 @@ import { Branch, VerificationResult, Source } from '../types';
 
 type Props = { data: VerificationResult; isDarkMode: boolean; labelMode: 'hover' | 'all'; onSourceSelect: (source: Source) => void; onClaimSelect?: (claim: Branch) => void; selectedSourceId?: string; selectedClaimId?: string; disintegratingSourceId?: string | null; disintegratingClaimId?: string | null; onDisintegrationComplete?: () => void };
 
-function Preview({ label, detail, preview, citedText, imageUrl, visible, focused, onPreviewFocus, onPreviewBlur, onPreviewSelect }: { label: string; detail: string; preview?: string; citedText?: string; imageUrl?: string; visible: boolean; focused: boolean; onPreviewFocus?: () => void; onPreviewBlur?: () => void; onPreviewSelect?: () => void }) {
+function Preview({ label, detail, preview, citedText, imageUrl, visible, focused }: { label: string; detail: string; preview?: string; citedText?: string; imageUrl?: string; visible: boolean; focused: boolean }) {
   if (!visible) return null;
   const excerpt = preview || detail;
   const parts = citedText && excerpt.includes(citedText) ? excerpt.split(citedText) : [excerpt];
-  return <div className={`universe-label visible ${focused ? 'focused' : 'passive'}`}><span>{label}</span><strong>{detail}</strong>{focused && preview && <div className="cosmic-preview" onPointerEnter={onPreviewFocus} onPointerLeave={onPreviewBlur} onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onTouchMove={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onPreviewSelect?.(); }}>{imageUrl && <div className="cosmic-preview-visual"><img src={imageUrl} alt="" /></div>}<div className="cosmic-preview-copy">{parts.map((part, index) => <React.Fragment key={index}><i>{part}</i>{citedText && index < parts.length - 1 && <b>{citedText}</b>}</React.Fragment>)}</div></div>}</div>;
+  return <div className={`universe-label visible ${focused ? 'focused' : 'passive'}`}><span>{label}</span><strong>{detail}</strong>{focused && preview && <div className="cosmic-preview">{imageUrl && <div className="cosmic-preview-visual"><img src={imageUrl} alt="" /></div>}<div className="cosmic-preview-copy">{parts.map((part, index) => <React.Fragment key={index}><i>{part}</i>{citedText && index < parts.length - 1 && <b>{citedText}</b>}</React.Fragment>)}</div></div>}</div>;
 }
 
 function Pulse({ start, end, color, delay = 0, active = false }: { start: [number,number,number]; end: [number,number,number]; color: string; delay?: number; active?: boolean }) {
@@ -70,7 +70,7 @@ function MicroNodeBurst({ color, size }: { color: string; size: number }) {
   return <group ref={group}>{particles.map((particle, index) => <mesh key={index}><icosahedronGeometry args={[particle.scale, 1]}/><meshBasicMaterial color={color} transparent opacity={.95} depthWrite={false} blending={THREE.AdditiveBlending}/></mesh>)}</group>;
 }
 
-function Orb({ nodeId, active, selected = false, lineage = false, suppressPreview = false, labelMode, onFocus, position, color, size, label, detail, preview, citedText, imageUrl, onClick, order = 0, disintegrating = false, onDisintegrationComplete }: { nodeId: string; active: boolean; selected?: boolean; lineage?: boolean; suppressPreview?: boolean; labelMode: 'hover' | 'all'; onFocus: (id: string | null) => void; position: [number,number,number]; color: string; size: number; label: string; detail: string; preview?: string; citedText?: string; imageUrl?: string; onClick?: () => void; order?: number; disintegrating?: boolean; onDisintegrationComplete?: () => void }) {
+function Orb({ nodeId, active, selected = false, lineage = false, labelMode, onFocus, position, color, size, label, detail, preview, citedText, imageUrl, onClick, order = 0, disintegrating = false, onDisintegrationComplete }: { nodeId: string; active: boolean; selected?: boolean; lineage?: boolean; labelMode: 'hover' | 'all'; onFocus: (id: string | null) => void; position: [number,number,number]; color: string; size: number; label: string; detail: string; preview?: string; citedText?: string; imageUrl?: string; onClick?: () => void; order?: number; disintegrating?: boolean; onDisintegrationComplete?: () => void }) {
   const [hovered, setHovered] = useState(false); const group = useRef<THREE.Group>(null); const visual = useRef<THREE.Group>(null); const dissolutionStart = useRef<number | null>(null);
   useEffect(() => { if (!disintegrating || !onDisintegrationComplete) return; const timer = window.setTimeout(onDisintegrationComplete, 1320); return () => window.clearTimeout(timer); }, [disintegrating, onDisintegrationComplete]);
   const energized = hovered || selected;
@@ -80,17 +80,18 @@ function Orb({ nodeId, active, selected = false, lineage = false, suppressPrevie
   const hitRadius = size * .96;
   const selectNode = () => { setHovered(false); onFocus(null); onClick?.(); };
   return <Float speed={1.3 + size} rotationIntensity={.25} floatIntensity={.7}><group ref={group} position={position}>
-    <group ref={visual}><EnergyAura color={color} size={size} hovered={energized} selected={selected}/>{selected && <SelectionHalo size={size}/>}<mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={selected ? '#ffe39a' : energized ? '#ffe39a' : lineage ? '#f8d47c' : color} intensity={selected ? 10.5 : energized ? 4.9 : lineage ? 2.85 : 2.3} distance={size * (selected ? 10 : 7)}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .42, 0]} style={{ pointerEvents: active && !suppressPreview ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} imageUrl={imageUrl} visible={labelMode === 'all' || selected || (active && !suppressPreview)} focused={active && !suppressPreview} onPreviewFocus={() => onFocus(nodeId)} onPreviewBlur={() => { if (!selected) onFocus(null); }} onPreviewSelect={selectNode}/></Html></group>
+    <group ref={visual}><EnergyAura color={color} size={size} hovered={energized} selected={selected}/>{selected && <SelectionHalo size={size}/>}<mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={selected ? '#ffe39a' : energized ? '#ffe39a' : lineage ? '#f8d47c' : color} intensity={selected ? 10.5 : energized ? 4.9 : lineage ? 2.85 : 2.3} distance={size * (selected ? 10 : 7)}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .42, 0]} style={{ pointerEvents: 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} imageUrl={imageUrl} visible={labelMode === 'all' || selected || active} focused={active}/></Html></group>
     <mesh onPointerOver={(event) => { if (disintegrating) return; event.stopPropagation(); setHovered(true); onFocus(nodeId); document.body.style.cursor = 'pointer'; }} onPointerOut={(event) => { event.stopPropagation(); setHovered(false); onFocus(null); document.body.style.cursor = 'auto'; }} onClick={(event) => { if (disintegrating) return; event.stopPropagation(); selectNode(); }}><sphereGeometry args={[hitRadius, 24, 24]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
     {disintegrating && <MicroNodeBurst color={color} size={size}/>} 
   </group></Float>;
 }
 
 function sourceTone(source: Source) {
+  const directness = source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 0;
   if (source.isDodgy) return '#df7772';
   if (source.evidenceProfile?.stance === 'refutes') return '#f27d89';
   if (source.evidenceProfile?.stance === 'context') return '#d6ab59';
-  if (source.evidenceProfile?.stance === 'supports' && (source.evidenceProfile.directness ?? 0) >= 90) return '#a4f29a';
+  if (source.evidenceProfile?.stance === 'supports' && directness >= 90) return '#a4f29a';
   if (source.evidenceProfile?.stance === 'supports') return '#61c69a';
   return '#78b9df';
 }
@@ -108,7 +109,7 @@ function branchEvidenceDistance(branch: Branch) {
   const sources = branch.sources;
   const average = (values: number[], fallback: number) => values.length ? values.reduce((total, value) => total + value, 0) / values.length : fallback;
   const credibility = average(sources.map((source) => source.credibilityScore ?? 50), 40);
-  const directness = average(sources.map((source) => source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45), 40);
+  const directness = average(sources.map((source) => source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45), 40);
   const evidenceQuality = average(sources.map((source) => source.metrics?.evidenceQuality ?? 45), 40);
   const compoundedPath = Math.max(branch.evidenceBalance?.support ?? 0, branch.evidenceBalance?.refutation ?? 0);
   // Spatial distance means evidentiary proximity, not a claim's popularity or a generic confidence score.
@@ -129,9 +130,8 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
   const sceneRadius = outerRadius + 3.25;
   const points = useMemo(() => branches.map((branch, index) => { const angle = (index / Math.max(branches.length, 1)) * Math.PI * 2 - Math.PI / 2; const radius = branchDistances[index]; return [Math.cos(angle) * radius, Math.sin(angle) * radius * .68, index % 2 ? -.68 : .54] as [number,number,number]; }), [branches, branchDistances]);
   const cameraDistance = Math.max(10.5, sceneRadius * 2.05);
-  const hasOpenDossier = Boolean(selectedSourceId || selectedClaimId);
   return <div className="discovery-universe"><Canvas onPointerMissed={() => setActiveNode(null)} dpr={[1, 2]} camera={{ position: [0, 0, cameraDistance], fov: 45 }} gl={{ antialias:true, alpha:true }} style={{ touchAction: 'none' }}><color attach="background" args={[isDarkMode ? '#090d13' : '#f6f4ef']}/><fog attach="fog" args={[isDarkMode ? '#090d13' : '#f6f4ef', sceneRadius + 4, sceneRadius * 3.25]}/><ambientLight intensity={.34}/><pointLight position={[0, 1, 4]} intensity={42} color="#d9ad50"/><pointLight position={[-4, -3, 3]} intensity={19} color="#5ca4d5"/><pointLight position={[4, 2, -3]} intensity={12} color="#77c5a0"/><Sparkles count={Math.min(540, 280 + totalSources * 7)} scale={[sceneRadius * 3.1,sceneRadius * 1.9,9]} size={1.65} speed={.25} color={isDarkMode ? '#ead083' : '#a67b24'}/>
-    <Orb nodeId="core" active={activeNode === 'core'} lineage={selectedBranchIndex >= 0} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={[0,0,0]} color="#d4a64b" size={1.08} label="CORE QUESTION" detail={data.coreConcept} preview={data.biasAnalysis} order={0}/>
+    <Orb nodeId="core" active={activeNode === 'core'} lineage={selectedBranchIndex >= 0} labelMode={labelMode} onFocus={setActiveNode} position={[0,0,0]} color="#d4a64b" size={1.08} label={`CORE QUESTION · ASSESSMENT ${data.confidenceScore}%`} detail={data.coreConcept} preview={data.biasAnalysis} order={0}/>
     {branches.map((branch, index) => {
       const strongSupport = (branch.supportStrength ?? 0) >= 80 && branch.verdict !== 'contested';
       const branchColor = claimTone(branch);
@@ -143,10 +143,10 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
         {strongSupport && <Line points={[[0, 0, 0], points[index]]} color="#bdf9a3" lineWidth={4.7} transparent opacity={.19}/>}
         <Line points={[[0, 0, 0], points[index]]} color={isLineageBranch ? '#ffe29a' : branchColor} lineWidth={isLineageBranch ? 2.2 : strongSupport ? 1.65 : 1.15} transparent opacity={isLineageBranch ? .96 : strongSupport ? .86 : .58}/>
         <Pulse start={[0, 0, 0]} end={points[index]} color={branchColor} delay={index * .15} active={isLineageBranch}/>
-        <Orb nodeId={branchNodeId} active={activeNode === branchNodeId} selected={isSelectedBranch} lineage={isLineageBranch} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={points[index]} color={branchColor} size={.52 + (strongSupport ? .065 : 0)} label={strongSupport ? `EVIDENCE SUPPORT · ${branch.supportStrength}%` : `${branch.verdict?.replaceAll('_', ' ') || 'CLAIM'} · ${String(index + 1).padStart(2, '0')}`} detail={branch.claim} preview={branch.biasAnalysis} onClick={() => onClaimSelect?.(branch)} order={index + 1} disintegrating={disintegratingClaimId === branch.graphId} onDisintegrationComplete={disintegratingClaimId === branch.graphId ? onDisintegrationComplete : undefined}/>
+        <Orb nodeId={branchNodeId} active={activeNode === branchNodeId} selected={isSelectedBranch} lineage={isLineageBranch} labelMode={labelMode} onFocus={setActiveNode} position={points[index]} color={branchColor} size={.52 + (strongSupport ? .065 : 0)} label={strongSupport ? `EVIDENCE SUPPORT ${branch.supportStrength}% · ASSESSMENT ${branch.evidenceBalance?.assessmentConfidence ?? branch.confidenceScore}%` : `${branch.verdict?.replaceAll('_', ' ') || 'CLAIM'} · ASSESSMENT ${branch.evidenceBalance?.assessmentConfidence ?? branch.confidenceScore}% · +${branch.evidenceBalance?.support ?? 0}/−${branch.evidenceBalance?.refutation ?? 0}`} detail={branch.claim} preview={branch.biasAnalysis} onClick={() => onClaimSelect?.(branch)} order={index + 1} disintegrating={disintegratingClaimId === branch.graphId} onDisintegrationComplete={disintegratingClaimId === branch.graphId ? onDisintegrationComplete : undefined}/>
         {branch.sources.map((source, sourceIndex) => {
           const credibility = source.credibilityScore ?? 50;
-          const directness = source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45;
+          const directness = source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45;
           const sourceCount = branch.sources.length;
           const branchAngle = (index / Math.max(branches.length, 1)) * Math.PI * 2 - Math.PI / 2;
           const spread = Math.min(.78, Math.PI / Math.max(3, sourceCount + 1));
@@ -158,13 +158,13 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
           const isSelectedSource = source.graphId === selectedSourceId;
           const sourceNodeId = `source-${index}-${sourceIndex}`;
           const stance = source.evidenceProfile?.stance || 'unclear';
-          const directSupport = stance === 'supports' && (source.evidenceProfile?.directness ?? 0) >= 90 && !source.isDodgy;
+          const directSupport = stance === 'supports' && directness >= 90 && !source.isDodgy;
           const pathSuffix = source.credibilityPath ? ` · PATH ${source.credibilityPath.compoundedContribution}%` : '';
           return <React.Fragment key={source.graphId || sourceNodeId}>
             {isSelectedSource && <Line points={[points[index], sourcePos]} color="#ffe29a" lineWidth={3.8} transparent opacity={.46}/>}
             <Line points={[points[index], sourcePos]} color={isSelectedSource ? '#ffe29a' : color} lineWidth={isSelectedSource ? 1.65 : .72} transparent opacity={isSelectedSource ? .96 : .55}/>
             <Pulse start={points[index]} end={sourcePos} color={color} delay={index * .12 + sourceIndex * .09} active={isSelectedSource}/>
-            <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} suppressPreview={hasOpenDossier} labelMode={labelMode} onFocus={setActiveNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003) + (directSupport ? .028 : 0)} label={`${stance === 'refutes' ? 'REFUTING TRACE' : directSupport ? `DIRECT SUPPORT · ${source.evidenceProfile?.directness}%` : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'}${pathSuffix}`} detail={source.title} preview={source.snippet} citedText={source.citedText} imageUrl={source.imageUrl} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
+            <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} labelMode={labelMode} onFocus={setActiveNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003) + (directSupport ? .028 : 0)} label={`${stance === 'refutes' ? 'REFUTING TRACE' : directSupport ? `DIRECT SUPPORT ${directness}%` : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'} · CRED ${credibility}%${pathSuffix}`} detail={source.title} preview={source.snippet} citedText={source.citedText} imageUrl={source.imageUrl} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
           </React.Fragment>;
         })}
       </React.Fragment>;

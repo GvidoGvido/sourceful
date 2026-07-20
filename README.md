@@ -61,7 +61,7 @@ For each source, its compounded contribution is the geometric combination of:
 
 1. **Source quality** — the observable authority, evidence quality, transparency, and citation signals available for that trace.
 2. **Claim relevance** — how strongly the exact fetched/returned passage overlaps the active branch claim.
-3. **Directness** — whether the material directly supplies the evidence rather than merely commenting on it.
+3. **Directness** — whether the material directly supplies the evidence rather than merely commenting on it. After a page is inspected, Sourceful caps the extractor’s initial observation against the exact claim terms recovered from that page’s passage, so a polished but tangential result cannot retain an inflated directness score.
 4. **Independence** — discounted when a trace is in the same publisher or observed shared-reference provenance path.
 
 The system first combines repeated material within one provenance path with a strong discount, then compounds only across distinct paths. Supporting, refuting, and contextual evidence remain separate values. This means a branch can be well researched and strongly refuted; a high **assessment confidence** is not automatically high **support for the claim**.
