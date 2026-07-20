@@ -4,6 +4,7 @@ export interface Source {
   snippet: string;
   citedText: string;
   imageUrl?: string;
+  contentInspected?: boolean;
   credibilityScore?: number;
   isDodgy?: boolean;
   isKilled?: boolean;

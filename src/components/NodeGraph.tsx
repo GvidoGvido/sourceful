@@ -26,11 +26,12 @@ const generateLayout = (data: VerificationResult) => {
   const BRANCH_W = 360;
   const BRANCH_H = 180;
   
-  const SOURCE_W = 440;
-  const SOURCE_H = 460;
+  const SOURCE_W = 400;
+  const SOURCE_H = 430;
   
-  const GAP_X = 240; 
-  const GAP_Y = 80;  
+  const GAP_X = 210;
+  const GAP_Y = 72;
+  const SOURCES_PER_ROW = 2;
   
   const nodes: any[] = [];
   const edges: any[] = [];
@@ -40,25 +41,27 @@ const generateLayout = (data: VerificationResult) => {
   data.branches.forEach((branch, bIdx) => {
     const startY = currentY;
     const branchX = CORE_W + GAP_X + (100 - branch.confidenceScore) * 1.8;
+    const sourceRows = Math.max(1, Math.ceil(branch.sources.length / SOURCES_PER_ROW));
+    const branchSpan = sourceRows * SOURCE_H + Math.max(0, sourceRows - 1) * GAP_Y;
+    const branchY = startY + (branchSpan - BRANCH_H) / 2;
+    const sourceBaseX = branchX + BRANCH_W + GAP_X;
     
     branch.sources.forEach((source, sIdx) => {
+      const sourceColumn = sIdx % SOURCES_PER_ROW;
+      const sourceRow = Math.floor(sIdx / SOURCES_PER_ROW);
       nodes.push({
         id: `source-${bIdx}-${sIdx}`,
         type: 'source',
         data: source,
         branchData: branch,
         branchId: `branch-${bIdx}`,
-        x: branchX + BRANCH_W + GAP_X + (100 - (source.credibilityScore ?? 50)) * 1.25,
-        y: currentY,
+        x: sourceBaseX + sourceColumn * (SOURCE_W + GAP_X * .55) + (100 - (source.credibilityScore ?? 50)) * .32,
+        y: startY + sourceRow * (SOURCE_H + GAP_Y),
         width: SOURCE_W,
         height: SOURCE_H,
         animOrder: 2 + (bIdx * 0.5) + (sIdx * 0.2) // for staggered animation
       });
-      currentY += SOURCE_H + GAP_Y;
     });
-    
-    const endY = currentY - GAP_Y;
-    const branchY = startY + (endY - startY) / 2 - (BRANCH_H / 2);
     
     nodes.push({
       id: `branch-${bIdx}`,
@@ -87,6 +90,7 @@ const generateLayout = (data: VerificationResult) => {
         animOrder: 1.5 + (bIdx * 0.5) + (sIdx * 0.2)
       });
     });
+    currentY += branchSpan + GAP_Y * 1.5;
   });
 
   // Secondary evidence links are kept separate from the claim tree. They appear only when
@@ -114,7 +118,7 @@ const generateLayout = (data: VerificationResult) => {
     });
   });
   
-  const totalHeight = currentY - GAP_Y;
+  const totalHeight = Math.max(CORE_H, currentY - GAP_Y * 1.5);
   const coreY = (totalHeight / 2) - (CORE_H / 2);
   
   nodes.push({
@@ -143,9 +147,13 @@ const generateLayout = (data: VerificationResult) => {
     });
   });
   
-  // Center around (0,0)
-  const offsetY = -(totalHeight / 2);
-  const offsetX = -((CORE_W + GAP_X + BRANCH_W + GAP_X + SOURCE_W) / 2);
+  // Center around (0,0) from actual card bounds; this keeps fit/zoom stable as branches grow.
+  const preMinX = Math.min(...nodes.map((node) => node.x));
+  const preMaxX = Math.max(...nodes.map((node) => node.x + node.width));
+  const preMinY = Math.min(...nodes.map((node) => node.y));
+  const preMaxY = Math.max(...nodes.map((node) => node.y + node.height));
+  const offsetX = -(preMinX + preMaxX) / 2;
+  const offsetY = -(preMinY + preMaxY) / 2;
   
   nodes.forEach(n => {
     n.x += offsetX;
@@ -219,9 +227,9 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
   const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
   const [view, setView] = useState({ x: 0, y: 0, zoom: .35 });
   const fitInset = { horizontal: 72, top: 86, bottom: 76 };
-  const fitZoom = boardSize.width && boardSize.height ? Math.max(.1, Math.min((boardSize.width - fitInset.horizontal * 2) / bounds.width, (boardSize.height - fitInset.top - fitInset.bottom) / bounds.height)) : .2;
-  const minZoom = Math.min(.12, fitZoom);
-  const maxZoom = Math.max(1.7, fitZoom * 7);
+  const fitZoom = boardSize.width && boardSize.height ? Math.max(.025, Math.min((boardSize.width - fitInset.horizontal * 2) / bounds.width, (boardSize.height - fitInset.top - fitInset.bottom) / bounds.height)) : .2;
+  const minZoom = Math.max(.025, Math.min(.12, fitZoom * .55));
+  const maxZoom = Math.max(1.7, fitZoom * 9);
   const clampZoom = (value: number) => Math.max(minZoom, Math.min(maxZoom, value));
   const fitGraph = () => setView({ x: -(bounds.minX + bounds.maxX) * fitZoom / 2, y: (fitInset.top + (boardSize.height - fitInset.bottom)) / 2 - boardSize.height / 2 - (bounds.minY + bounds.maxY) * fitZoom / 2, zoom: fitZoom });
   const zoomAt = (nextZoom: number, clientX?: number, clientY?: number) => {
