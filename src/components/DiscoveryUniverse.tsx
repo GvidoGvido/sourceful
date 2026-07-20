@@ -4,7 +4,7 @@ import { Html, Line, OrbitControls, Sparkles } from '@react-three/drei';
 import * as THREE from 'three';
 import { Branch, VerificationResult, Source } from '../types';
 
-type Props = { data: VerificationResult; isDarkMode: boolean; labelMode: 'hover' | 'all'; onSourceSelect: (source: Source) => void; onClaimSelect?: (claim: Branch) => void; selectedSourceId?: string; selectedClaimId?: string; disintegratingSourceId?: string | null; disintegratingClaimId?: string | null; onDisintegrationComplete?: () => void };
+type Props = { data: VerificationResult; isDarkMode: boolean; labelMode: 'hover' | 'all'; driftPaused?: boolean; onSourceSelect: (source: Source) => void; onClaimSelect?: (claim: Branch) => void; selectedSourceId?: string; selectedClaimId?: string; disintegratingSourceId?: string | null; disintegratingClaimId?: string | null; onDisintegrationComplete?: () => void };
 
 function Preview({ label, detail, preview, citedText, imageUrl, visible, focused, onPreviewEnter, onPreviewLeave, onPreviewSelect }: { label: string; detail: string; preview?: string; citedText?: string; imageUrl?: string; visible: boolean; focused: boolean; onPreviewEnter?: () => void; onPreviewLeave?: () => void; onPreviewSelect?: () => void }) {
   if (!visible) return null;
@@ -86,9 +86,10 @@ function Orb({ nodeId, active, selected = false, lineage = false, labelMode, onF
   // The interactive field follows the visible orb—not its labels or the ambient glow.
   // This makes every sphere reliably targetable without stealing hover from neighbours.
   const hitRadius = size * .96;
+  const previewAnchor = Math.max(.18, size * .48);
   const selectNode = () => { cancelBlur(); onFocus(nodeId); onClick?.(); };
   return <group ref={group} position={position}>
-    <group ref={visual}><EnergyAura color={color} size={size} hovered={energized} selected={selected}/>{selected && <SelectionHalo size={size}/>}<mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={selected ? '#ffe39a' : energized ? '#ffe39a' : lineage ? '#f8d47c' : color} intensity={selected ? 10.5 : energized ? 4.9 : lineage ? 2.85 : 2.3} distance={size * (selected ? 10 : 7)}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, size + .12, 0]} style={{ pointerEvents: previewFocused ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} imageUrl={imageUrl} visible={labelMode === 'all' || selected || previewFocused} focused={previewFocused} onPreviewEnter={() => { cancelBlur(); setPreviewHovered(true); onFocus(nodeId); }} onPreviewLeave={() => { setPreviewHovered(false); scheduleBlur(); }} onPreviewSelect={selectNode}/></Html></group>
+    <group ref={visual}><EnergyAura color={color} size={size} hovered={energized} selected={selected}/>{selected && <SelectionHalo size={size}/>}<mesh raycast={() => undefined}><sphereGeometry args={[size, 72, 72]}/><PlasmaSurface color={color} hovered={energized}/></mesh><pointLight color={selected ? '#ffe39a' : energized ? '#ffe39a' : lineage ? '#f8d47c' : color} intensity={selected ? 10.5 : energized ? 4.9 : lineage ? 2.85 : 2.3} distance={size * (selected ? 10 : 7)}/><Html zIndexRange={[160, 0]} distanceFactor={12} center position={[0, previewAnchor, 0]} style={{ pointerEvents: previewFocused ? 'auto' : 'none' }}><Preview label={label} detail={detail} preview={preview} citedText={citedText} imageUrl={imageUrl} visible={labelMode === 'all' || selected || previewFocused} focused={previewFocused} onPreviewEnter={() => { cancelBlur(); setPreviewHovered(true); onFocus(nodeId); }} onPreviewLeave={() => { setPreviewHovered(false); scheduleBlur(); }} onPreviewSelect={selectNode}/></Html></group>
     <mesh onPointerOver={(event) => { if (disintegrating) return; event.stopPropagation(); cancelBlur(); setHovered(true); onFocus(nodeId); document.body.style.cursor = 'pointer'; }} onPointerOut={(event) => { event.stopPropagation(); setHovered(false); scheduleBlur(); }} onClick={(event) => { if (disintegrating) return; event.stopPropagation(); selectNode(); }}><sphereGeometry args={[hitRadius, 24, 24]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
     {disintegrating && <MicroNodeBurst color={color} size={size}/>} 
   </group>;
@@ -128,7 +129,7 @@ function branchEvidenceDistance(branch: Branch) {
   return 3.05 + (100 - evidentiaryProximity) * .058 + (verdictPenalty[branch.verdict || ''] || .72) + (hasContradiction ? .25 : 0);
 }
 
-export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect, onClaimSelect, selectedSourceId, selectedClaimId, disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete }: Props) {
+export function DiscoveryUniverse({ data, isDarkMode, labelMode, driftPaused = false, onSourceSelect, onClaimSelect, selectedSourceId, selectedClaimId, disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete }: Props) {
   const branches = data.branches;
   const [activeNode, setActiveNode] = useState<string | null>(null);
   const focusNode = (nodeId: string | null, releasedNodeId?: string) => setActiveNode((currentNode) => nodeId === null && releasedNodeId && currentNode !== releasedNodeId ? currentNode : nodeId);
@@ -178,6 +179,6 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, onSourceSelect,
         })}
       </React.Fragment>;
     })}
-    <OrbitControls enablePan minDistance={Math.max(6.5, sceneRadius * .92)} maxDistance={Math.max(15, sceneRadius * 3.5)} autoRotate={activeNode === null} autoRotateSpeed={.22} enableDamping dampingFactor={.06}/>
+    <OrbitControls enablePan minDistance={Math.max(6.5, sceneRadius * .92)} maxDistance={Math.max(15, sceneRadius * 3.5)} autoRotate={!driftPaused && activeNode === null} autoRotateSpeed={.22} enableDamping dampingFactor={.06}/>
   </Canvas><div className="universe-instruction">Distance maps evidentiary proximity: direct traces sit closer · red can be direct counterevidence · lime marks 90%+ direct support.</div></div>;
 }
