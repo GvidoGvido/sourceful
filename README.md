@@ -22,6 +22,8 @@ Its distinction is **explainable uncertainty**: rather than returning a black-bo
 - Routes work intelligently for public claims, history, scripture, maths, and uploaded documents.
 - Builds an explorable 3D discovery graph and a 2D research board with claim and source nodes.
 - Includes a built-in “How to read the graph” legend covering node roles, stance colours, assessment scores, evidence distance, and the selected gold provenance route.
+- Uses an explicit visual evidence key: green supports, lime marks high-directness support, amber adds context, rose/red carries counterevidence or trace risk, and blue marks unresolved or non-scoring observed-lineage leads. A blue node never strengthens a claim by itself.
+- Keeps layered dossiers usable: source, claim, library, and Info panels may remain open, but the panel most recently opened or clicked takes visual precedence.
 - Calculates an auditable credibility path for every trace: source quality, exact claim relevance, directness, independence, and bounded compounded contribution.
 - Compounds supporting and refuting paths **separately** per branch, discounting repeated sources that share publisher or observed-reference provenance.
 - Exports claim/source evidence to CSV, saves research artefacts locally, creates briefs, and can dissolve weak traces from the working graph.
@@ -80,12 +82,17 @@ The system first combines repeated material within one provenance path with a st
 
 Domain diversity is a proxy rather than proof of editorial independence. Shared citations are a clue of possible common provenance, not proof of copying; cited-reference density is not treated as a web-wide inbound citation count.
 
+### Bounded fetched-passage review
+
+After public-page inspection, Sourceful may send only the recovered, claim-relevant excerpt—not a whole crawled page—to GPT-5.6 for a second, source-specific review. The pass is capped at **18 excerpts** and the model can revise only the excerpt's stance, evidence type, and directness against its precise branch claim. It cannot use source reputation, URLs, or outside knowledge as evidence in that pass, and it cannot infer author credentials or turn a linked page into corroboration. The review is visible in the source dossier and the deterministic provenance scorer then recalculates the trace and branch from those bounded observations.
+
 ### Bounded evidence expansion
 
 The first search is an initial pass, not a claim of exhaustive research. A live graph can be extended from the toolbar or a specific claim card. Each extension is a new OpenAI web-research pass focused on missing support, refutation, or context; it deduplicates canonical source URLs before merging results.
 
 - Sourceful caps a graph at **four total passes** and **60 source traces**, with a stricter expansion request limit, so BYOK research cannot turn into an unbounded autonomous crawler.
 - For up to 24 not-yet-inspected public source pages per pass, the server safely resolves Open Graph thumbnails, extracts a bounded visible-text candidate for the precise claim, and records links to other *active* source traces. Purple dashed board arcs mean an observed page-to-page link only; they do **not** assert that the link is a scholarly citation or proof.
+- A researcher can select a direct source and choose **Trace 2–3 observed sources**. Sourceful safely fetches at most ten reference-like public links from that page, keeps only up to three child pages with a recovered claim-relevant passage, and renders them as blue **observed lineage** leads. They are deliberately excluded from support/refutation and compounded-confidence calculations: a citation-heavy page cannot manufacture a stronger verdict by expanding into many descendants.
 - Sourceful also stores bounded fingerprints of observed external references. When active traces share one, the board shows a separate provenance path: it is an indication of a potentially shared evidence lineage, **not** independent corroboration.
 - Sources sharing a publisher domain are stored as a provenance cluster and are not counted as independent corroboration merely because they appear more than once.
 

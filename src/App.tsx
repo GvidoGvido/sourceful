@@ -40,9 +40,13 @@ function metricTrace(key: string, source: Source, profile?: Source['evidenceProf
   return labels[key] || 'This signal is calculated from the returned source record and its position in the active evidence graph.';
 }
 
-type SavedArtifact = { id: string; title: string; createdAt: string; query: string; model: string; result: VerificationResult; summary?: string };
+type SavedArtifact = { id: string; title: string; createdAt: string; query: string; model: string; result: VerificationResult; summary?: string; briefStale?: boolean };
 const artifactStorageKey = 'sourceful-research-library-v1';
 const savedText = (...values: unknown[]) => values.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() || '';
+const sourceTraceCount = (branches: Branch[]) => {
+  const countTree = (sources: Source[]): number => sources.reduce((total, source) => total + 1 + (source.lineageSources?.length ? countTree(source.lineageSources) : 0), 0);
+  return branches.reduce((total, branch) => total + countTree(branch.sources), 0);
+};
 
 // URLs and claim wording are evidence attributes, not unique graph keys. One source can
 // legitimately inform two branches, so the interactive graph always receives its own IDs.
@@ -51,6 +55,13 @@ function identifyGraph(result: VerificationResult): VerificationResult {
   const usedSourceIds = new Set<string>();
   const legacyResult = result as VerificationResult & Record<string, unknown>;
   const savedBranches = Array.isArray(legacyResult.branches) ? legacyResult.branches : [];
+  const identifySource = (source: Source & Record<string, unknown>, sourceIndex: number, parentId: string, lineageParentId?: string): Source => {
+    let sourceId = source.graphId || `${parentId}:source-${sourceIndex}`;
+    if (usedSourceIds.has(sourceId)) sourceId = `${parentId}:source-${sourceIndex}-${usedSourceIds.size}`;
+    usedSourceIds.add(sourceId);
+    const savedLineage = Array.isArray(source.lineageSources) ? source.lineageSources as Source[] : [];
+    return { ...source, graphId: sourceId, lineageParentId, lineageSources: savedLineage.length ? savedLineage.map((child, childIndex) => identifySource(child as Source & Record<string, unknown>, childIndex, sourceId, sourceId)) : undefined };
+  };
   return {
     ...result,
     coreConcept: savedText(legacyResult.coreConcept, legacyResult.query, legacyResult.title) || 'Untitled research question',
@@ -75,12 +86,7 @@ function identifyGraph(result: VerificationResult): VerificationResult {
         ...branch,
         claim,
         graphId: branchId,
-        sources: savedSources.map((source, sourceIndex) => {
-          let sourceId = source.graphId || `${branchId}:source-${sourceIndex}`;
-          if (usedSourceIds.has(sourceId)) sourceId = `${branchId}:source-${sourceIndex}-${usedSourceIds.size}`;
-          usedSourceIds.add(sourceId);
-          return { ...source, graphId: sourceId };
-        })
+        sources: savedSources.map((source, sourceIndex) => identifySource(source as Source & Record<string, unknown>, sourceIndex, branchId))
       };
     })
   };
@@ -110,7 +116,7 @@ function ApiKeyVault({ isDarkMode, apiKey, onUse, onDisconnect, onClose }: { isD
   </motion.div>;
 }
 
-function ArtifactLibrary({ artifacts, isDarkMode, onRestore, onRename, onDelete, onClose }: { artifacts: SavedArtifact[]; isDarkMode: boolean; onRestore: (artifact: SavedArtifact) => void; onRename: (id: string, title: string) => void; onDelete: (id: string) => void; onClose: () => void }) {
+function ArtifactLibrary({ artifacts, isDarkMode, onRestore, onRename, onDelete, onClose, foreground, onFocus }: { artifacts: SavedArtifact[]; isDarkMode: boolean; onRestore: (artifact: SavedArtifact) => void; onRename: (id: string, title: string) => void; onDelete: (id: string) => void; onClose: () => void; foreground: boolean; onFocus: () => void }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState('');
   const beginRename = (artifact: SavedArtifact) => { setEditingId(artifact.id); setTitleDraft(artifact.title); };
@@ -121,16 +127,17 @@ function ArtifactLibrary({ artifacts, isDarkMode, onRestore, onRename, onDelete,
     setEditingId(null); setTitleDraft('');
   };
   const cancelRename = () => { setEditingId(null); setTitleDraft(''); };
-  return <motion.aside initial={{ x: 18, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 18, opacity: 0 }} className={cn('artifact-library', isDarkMode ? 'dossier-dark' : 'dossier-light')}><div className="dossier-topline"><span><FolderOpen size={14}/> Research library</span><button onClick={onClose}><X size={17}/></button></div>{artifacts.length ? <div className="artifact-list">{artifacts.map((artifact) => { const editing = editingId === artifact.id; return <article key={artifact.id}><div><span>{new Date(artifact.createdAt).toLocaleDateString()}</span>{editing ? <input className="artifact-title-input" aria-label="Research item name" autoFocus value={titleDraft} maxLength={120} onChange={(event) => setTitleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveRename(); if (event.key === 'Escape') cancelRename(); }} /> : <h3>{artifact.title}</h3>}<p>{artifact.result.branches.length} claim branches · {artifact.result.researchRoute?.replaceAll('_', ' ') || 'research'}</p></div><footer>{editing ? <div className="artifact-rename-actions"><button onClick={cancelRename}>Cancel</button><button onClick={saveRename} disabled={!titleDraft.trim()}>Save name</button></div> : <><button onClick={() => onRestore(artifact)}>Open</button><button onClick={() => beginRename(artifact)} title="Rename saved research">Rename</button><button onClick={() => onDelete(artifact.id)} title="Delete saved artifact"><Trash2 size={13}/></button></>}</footer></article>; })}</div> : <div className="empty-library"><Atom size={24}/><p>Your saved knowledge graphs will live here.</p></div>}</motion.aside>;
+  return <motion.aside initial={{ x: 18, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 18, opacity: 0 }} onMouseDown={onFocus} className={cn('artifact-library', foreground && 'panel-foreground', isDarkMode ? 'dossier-dark' : 'dossier-light')}><div className="dossier-topline"><span><FolderOpen size={14}/> Research library</span><button onClick={onClose}><X size={17}/></button></div>{artifacts.length ? <div className="artifact-list">{artifacts.map((artifact) => { const editing = editingId === artifact.id; return <article key={artifact.id}><div><span>{new Date(artifact.createdAt).toLocaleDateString()}</span>{editing ? <input className="artifact-title-input" aria-label="Research item name" autoFocus value={titleDraft} maxLength={120} onChange={(event) => setTitleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveRename(); if (event.key === 'Escape') cancelRename(); }} /> : <h3>{artifact.title}</h3>}<p>{artifact.result.branches.length} claim branches · {artifact.result.researchRoute?.replaceAll('_', ' ') || 'research'}{artifact.summary ? artifact.briefStale ? ' · briefing needs refresh' : ' · briefing saved' : ''}</p></div><footer>{editing ? <div className="artifact-rename-actions"><button onClick={cancelRename}>Cancel</button><button onClick={saveRename} disabled={!titleDraft.trim()}>Save name</button></div> : <><button onClick={() => onRestore(artifact)}>Open</button><button onClick={() => beginRename(artifact)} title="Rename saved research">Rename</button><button onClick={() => onDelete(artifact.id)} title="Delete saved artifact"><Trash2 size={13}/></button></>}</footer></article>; })}</div> : <div className="empty-library"><Atom size={24}/><p>Your saved knowledge graphs will live here.</p></div>}</motion.aside>;
 }
 
-function AboutPanel({ isDarkMode, onClose }: { isDarkMode: boolean; onClose: () => void }) {
-  return <motion.aside initial={{ y: -18, opacity: 0, scale: .97 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: -18, opacity: 0, scale: .97 }} className={cn('about-panel', isDarkMode ? 'dossier-dark' : 'dossier-light')}>
+function AboutPanel({ isDarkMode, onClose, foreground, onFocus }: { isDarkMode: boolean; onClose: () => void; foreground: boolean; onFocus: () => void }) {
+  return <motion.aside initial={{ y: -18, opacity: 0, scale: .97 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: -18, opacity: 0, scale: .97 }} onMouseDown={onFocus} className={cn('about-panel', foreground && 'panel-foreground', isDarkMode ? 'dossier-dark' : 'dossier-light')}>
     <div className="dossier-topline"><span><Info size={14}/> The Sourceful method</span><button onClick={onClose}><X size={17}/></button></div>
     <h2>Evidence, not an oracle.</h2>
     <p>Sourceful separates discovery from claim evaluation. It exposes the evidence path, discounts repeated provenance, and keeps credible counterevidence visible.</p>
     <div className="about-grid"><div><b>01</b><span>Routes each question to public-claim, historical, scripture, mathematical, or document research.</span></div><div><b>02</b><span>Compounds source quality, exact claim relevance, directness, and independence—without counting repeated paths twice.</span></div><div><b>03</b><span>Shows support and refutation separately, then marks a claim corroborated, contested, provisional, refuted, or insufficient.</span></div></div>
-    <section className="about-read-guide" aria-label="How to read a Sourceful graph"><h3>How to read the graph</h3><ol><li><b>Core orb</b><span>Your question and its current assessment confidence. It is a research-state signal, never a truth probability.</span></li><li><b>Branch orb</b><span>A testable sub-claim. Its +/− values keep supporting and refuting evidence separate; distance reflects evidentiary proximity, not popularity.</span></li><li><b>Source orb</b><span>One source trace. Green supports, rose/red challenges, gold adds context, and blue remains unresolved. Hover for the recovered extract; select the orb for its dossier.</span></li><li><b>Gold route</b><span>The currently selected node and its path back to your question. The dossier explains source quality, relevance, calibrated directness, and independence.</span></li></ol></section>
+    <section className="about-read-guide" aria-label="How to read a Sourceful graph"><h3>How to read the graph</h3><ol><li><b>Core orb</b><span>Your question and its current assessment confidence. It is a research-state signal, never a truth probability.</span></li><li><b>Branch orb</b><span>A testable sub-claim. Its +/− values keep supporting and refuting evidence separate; distance reflects evidentiary proximity, not popularity.</span></li><li><b>Source orb</b><span>One source trace. Hover for the recovered extract; select the orb for its dossier.</span></li><li><b>Gold route</b><span>The currently selected node and its path back to your question. The dossier explains source quality, relevance, calibrated directness, and independence.</span></li></ol></section>
+    <section className="about-colour-key" aria-label="Source graph colour key"><h3>Colour key</h3><ul><li><i className="core"/><span><b>Gold core</b>Your question; gold also traces the actively selected path.</span></li><li><i className="support"/><span><b>Green</b>Evidence classified as supporting the claim.</span></li><li><i className="direct-support"/><span><b>Lime</b>High-directness support (90%+); it is emphatic, not a proof.</span></li><li><i className="context"/><span><b>Amber</b>Context or framing evidence—not direct support or refutation.</span></li><li><i className="refute"/><span><b>Rose / red</b>Counterevidence or a high-risk trace. Red is a warning, not an instruction to discard it.</span></li><li><i className="lineage"/><span><b>Blue</b>An unresolved trace or observed lineage lead: an outgoing reference found from a source. It is displayed for provenance and does not change the claim score.</span></li></ul></section>
     <p className="about-note">The Guided demo is simulated; its illustration is decorative, never evidence. Live research requires your OpenAI key.</p>
   </motion.aside>;
 }
@@ -165,6 +172,28 @@ function ResearchBuildLoader({ isDarkMode, stage, onCancel }: { isDarkMode: bool
   </div>;
 }
 
+function ResearchLoadingModal({ isDarkMode, stage, onCancel }: { isDarkMode: boolean; stage: string; onCancel: () => void }) {
+  return <motion.div
+    className="research-loading-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Research in progress"
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+  >
+    <motion.div
+      className="research-loading-modal-card"
+      initial={{ opacity: 0, y: 18, scale: .975, filter: 'blur(8px)' }}
+      animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+      exit={{ opacity: 0, y: 12, scale: .985, filter: 'blur(6px)' }}
+      transition={{ type: 'spring', damping: 25, stiffness: 210 }}
+    >
+      <ResearchBuildLoader isDarkMode={isDarkMode} stage={stage} onCancel={onCancel}/>
+    </motion.div>
+  </motion.div>;
+}
+
 function InteractionToast({ message }: { message: string }) {
   return <div className="interaction-toast-anchor" role="status" aria-live="polite"><motion.div initial={{ opacity: 0, y: 10, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 7, scale: .96 }} className="interaction-toast"><CircleCheck size={15}/><span>{message}</span></motion.div></div>;
 }
@@ -192,7 +221,7 @@ function SourceVisualCarousel({ source }: { source: Source }) {
   </div>;
 }
 
-function SourceDossier({ source, isDarkMode, onClose, onDisintegrate }: { source: Source; isDarkMode: boolean; onClose: () => void; onDisintegrate: (source: Source) => void }) {
+function SourceDossier({ source, isDarkMode, onClose, onDisintegrate, onTraceLineage, tracingLineage, canTraceLineage, foreground, onFocus }: { source: Source; isDarkMode: boolean; onClose: () => void; onDisintegrate: (source: Source) => void; onTraceLineage: (source: Source) => void; tracingLineage: boolean; canTraceLineage: boolean; foreground: boolean; onFocus: () => void }) {
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [openMetric, setOpenMetric] = useState<string | null>(null);
   const fallback = { authority: 72, evidenceQuality: 78, independence: 74, recency: 68, transparency: 76, corroboration: 70, citationNetwork: 66, semanticDepth: 81 };
@@ -203,33 +232,35 @@ function SourceDossier({ source, isDarkMode, onClose, onDisintegrate }: { source
     try { return new URL(source.url).hostname.replace(/^www\./, ''); } catch { return 'Open original source'; }
   })();
   const visualStatus = source.isDemoVisual ? 'Guided-demo illustration · not source evidence' : hasThumbnail ? 'Source visual metadata available' : source.imageUrl ? 'Source visual unavailable in this browser' : source.contentInspected ? 'No source visual metadata exposed' : 'Source visual metadata not inspected';
-  return <motion.aside initial={{ x: -18, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -18, opacity: 0 }} className={cn('source-dossier', isDarkMode ? 'dossier-dark' : 'dossier-light')}>
+  return <motion.aside initial={{ x: -18, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -18, opacity: 0 }} onMouseDown={onFocus} className={cn('source-dossier', foreground && 'panel-foreground', isDarkMode ? 'dossier-dark' : 'dossier-light')}>
     <div className="dossier-topline"><span><BookOpenCheck size={14}/> Evidence dossier</span><button onClick={onClose}><X size={17}/></button></div>
     <div className={cn('dossier-source', hasThumbnail && 'has-thumbnail')}>
       {hasThumbnail ? <a className="dossier-thumbnail" href={source.url} target="_blank" rel="noreferrer" title="Open the original source"><img src={source.imageUrl} alt="" onError={() => setThumbnailFailed(true)} /><span>{source.isDemoVisual ? 'Guided illustration' : 'Open source'}</span></a> : <div className="dossier-orb"/>}
-      <p>SELECTED SOURCE</p><h2>{source.title}</h2><div className="dossier-byline">{source.author || 'Author attribution being assessed'} · {source.publishedAt || 'Date not indexed'}</div><span className="provider-trace">{source.provider === 'gemini_google' ? 'GOOGLE-GROUNDED LEAD' : 'OPENAI WEB DISCOVERY'}</span>
+      <p>{source.isLineageLead ? 'OBSERVED LINEAGE LEAD' : 'SELECTED SOURCE'}</p><h2>{source.title}</h2><div className="dossier-byline">{source.author || 'Author attribution being assessed'} · {source.publishedAt || 'Date not indexed'}</div><span className="provider-trace">{source.provider === 'gemini_google' ? 'GOOGLE-GROUNDED LEAD' : source.provider === 'sourceful_lineage' ? 'SOURCEFUL LINEAGE FETCH' : 'OPENAI WEB DISCOVERY'}</span>
       <div className="dossier-links"><a href={source.url} target="_blank" rel="noreferrer" title="Visit the original source">{sourceHost}<ArrowRight size={12}/></a>{source.author && <span>By {source.author}</span>}<span className="visual-fetch-status">{visualStatus}</span></div>
     </div>
     <blockquote><Quote size={16}/><p>{source.snippet}</p></blockquote>
     <SourceVisualCarousel source={source}/>
     {source.credibilityPath && <section className="credibility-path-panel"><div><span><Network size={13}/> Credibility path</span><b>{source.credibilityPath.compoundedContribution}% contribution</b></div><p>{source.credibilityPath.provenanceGroup}. The score is a bounded evidence contribution to this claim—not a probability that the claim is true.</p><dl><div><dt>Source quality</dt><dd>{source.credibilityPath.sourceQuality}/100</dd></div><div><dt>Claim relevance</dt><dd>{source.credibilityPath.claimRelevance}/100</dd></div><div><dt>Directness</dt><dd>{source.credibilityPath.directness}/100</dd></div><div><dt>Independence</dt><dd>{source.credibilityPath.independence}/100</dd></div></dl></section>}
-    {profile && <div className="evidence-profile"><div><span>Evidence class</span><b>{profile.evidenceType.replaceAll('_', ' ')}</b></div><div><span>Claim relation</span><b className={profile.stance}>{profile.stance}</b></div><div><span>Source class</span><b>{profile.sourceType.replaceAll('_', ' ')}</b></div><p>Scored from extracted evidence attributes; not a publisher reputation label.</p></div>}
-    <details className="source-trace-details"><summary>Source trace & observed signals <ChevronDown size={13}/></summary><dl><div><dt>Original link</dt><dd><a href={source.url} target="_blank" rel="noreferrer">{sourceHost}<ArrowRight size={11}/></a></dd></div><div><dt>Claim terms recovered</dt><dd>{source.claimMatches?.length ? source.claimMatches.join(' · ') : source.contentInspected ? 'No multi-term page extract recovered' : 'Not fetched yet'}</dd></div><div><dt>Returned citations</dt><dd>{source.citations ?? 'Not indexed'}</dd></div><div><dt>Observed active links</dt><dd>{typeof source.observedReferenceCount === 'number' ? `${source.observedReferenceCount} linked traces` : 'Not fetched yet'}</dd></div><div><dt>Observed reference paths</dt><dd>{source.citationFingerprints?.length ? `${source.citationFingerprints.length} external reference fingerprints` : source.contentInspected ? 'No qualifying shared-reference path observed' : 'Not fetched yet'}</dd></div><div><dt>Directness</dt><dd>{typeof source.credibilityPath?.directness === 'number' ? `${source.credibilityPath.directness}/100 · calibrated against recovered claim terms` : typeof profile?.directness === 'number' ? `${profile.directness}/100 · extractor observation` : 'Being assessed'}</dd></div><div><dt>Provider</dt><dd>{source.provider === 'gemini_google' ? 'Google-grounded lead' : 'OpenAI web discovery'}</dd></div></dl></details>
+    {profile && <div className="evidence-profile"><div><span>Evidence class</span><b>{profile.evidenceType.replaceAll('_', ' ')}</b></div><div><span>Claim relation</span><b className={profile.stance}>{profile.stance}</b></div><div><span>Source class</span><b>{profile.sourceType.replaceAll('_', ' ')}</b></div><p>{source.isLineageLead ? source.lineageNote || 'This observed outgoing reference is a provenance lead, not a supporting or refuting score.' : 'Scored from extracted evidence attributes; not a publisher reputation label.'}</p></div>}
+    <details className="source-trace-details"><summary>Source trace & observed signals <ChevronDown size={13}/></summary><dl><div><dt>Original link</dt><dd><a href={source.url} target="_blank" rel="noreferrer">{sourceHost}<ArrowRight size={11}/></a></dd></div><div><dt>Claim terms recovered</dt><dd>{source.claimMatches?.length ? source.claimMatches.join(' · ') : source.contentInspected ? 'No multi-term page extract recovered' : 'Not fetched yet'}</dd></div>{source.fetchedPassageReviewed && <div><dt>Fetched-passage review</dt><dd>{source.fetchedPassageAssessment || 'GPT reviewed the recovered passage against this exact claim.'}</dd></div>}<div><dt>Returned citations</dt><dd>{source.citations ?? 'Not indexed'}</dd></div><div><dt>Observed active links</dt><dd>{typeof source.observedReferenceCount === 'number' ? `${source.observedReferenceCount} linked traces` : 'Not fetched yet'}</dd></div><div><dt>Observed reference paths</dt><dd>{source.citationFingerprints?.length ? `${source.citationFingerprints.length} external reference fingerprints` : source.contentInspected ? 'No qualifying shared-reference path observed' : 'Not fetched yet'}</dd></div><div><dt>Directness</dt><dd>{typeof source.credibilityPath?.directness === 'number' ? `${source.credibilityPath.directness}/100 · calibrated against recovered claim terms` : typeof profile?.directness === 'number' ? `${profile.directness}/100 · extractor observation` : 'Being assessed'}</dd></div><div><dt>Provider</dt><dd>{source.provider === 'gemini_google' ? 'Google-grounded lead' : source.provider === 'sourceful_lineage' ? 'Sourceful bounded lineage fetch' : 'OpenAI web discovery'}</dd></div></dl></details>
+    {!source.isLineageLead && canTraceLineage && <button className="expand-claim-button" disabled={tracingLineage || Boolean(source.lineageSources?.length)} onClick={() => onTraceLineage(source)} title={source.lineageSources?.length ? 'Observed source lineage has already been mapped for this trace' : 'Fetch up to three safe, claim-relevant outgoing references from this source page'}><Network size={14}/>{tracingLineage ? 'Tracing source lineage…' : source.lineageSources?.length ? `${source.lineageSources.length} lineage lead${source.lineageSources.length === 1 ? '' : 's'} mapped` : 'Trace 2–3 observed sources'}</button>}
     <div className="dossier-section-title"><Network size={14}/> Verification lattice <span>LIVE TRACE</span></div>
     <div className="dossier-metrics">{Object.entries(metrics).map(([key, value], index) => <motion.div key={key} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * .08 }} className="metric-row"><div className="metric-header"><span className="metric-label">{metricNames[key]}<button type="button" className="metric-help" aria-label={`Explain ${metricNames[key]}`} aria-expanded={openMetric === key} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpenMetric((current) => current === key ? null : key); }}><Info size={11}/><span role="tooltip">{metricExplanations[key]}</span></button></span><b>{value}<small>/100</small></b></div><div className="metric-track"><motion.i initial={{ width: 0 }} animate={{ width: `${value}%` }} transition={{ delay: .35 + index * .08, duration: .7 }} /></div><em><CircleCheck size={12}/> {value > 74 ? 'corroborated' : value > 55 ? 'contextual review' : 'needs inquiry'}</em><details className="metric-details"><summary>Why this signal <ChevronDown size={11}/></summary><p>{metricTrace(key, source, profile)}</p></details></motion.div>)}</div>
     <div className="dossier-footer"><span>{source.citations ?? '—'} downstream citations indexed</span><a href={source.url} target="_blank" rel="noreferrer">Read original <ArrowRight size={14}/></a></div>
-    {(source.isDodgy || (source.credibilityScore ?? 100) < 50) && <button className="disintegrate-button" onClick={() => onDisintegrate(source)}><Atom size={14}/> Disintegrate weak trace</button>}
+    {!source.isLineageLead && (source.isDodgy || (source.credibilityScore ?? 100) < 50) && <button className="disintegrate-button" onClick={() => onDisintegrate(source)}><Atom size={14}/> Disintegrate weak trace</button>}
   </motion.aside>;
 }
 
-function ClaimDossier({ claim, isDarkMode, onClose, onDisintegrate, onExpand, canExpand }: { claim: Branch; isDarkMode: boolean; onClose: () => void; onDisintegrate: (claim: Branch) => void; onExpand: (claim: Branch) => void; canExpand: boolean }) {
+function ClaimDossier({ claim, isDarkMode, onClose, onDisintegrate, onExpand, canExpand, foreground, onFocus }: { claim: Branch; isDarkMode: boolean; onClose: () => void; onDisintegrate: (claim: Branch) => void; onExpand: (claim: Branch) => void; canExpand: boolean; foreground: boolean; onFocus: () => void }) {
   const balance = claim.evidenceBalance;
-  return <motion.aside initial={{ x: -18, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -18, opacity: 0 }} className={cn('source-dossier', isDarkMode ? 'dossier-dark' : 'dossier-light')}><button className="dossier-close" onClick={onClose} title="Close claim controls"><X size={17}/></button><div className="dossier-kicker"><Network size={14}/><span>CONFIDENCE CARD</span></div><h2>{claim.claim}</h2><div className="dossier-score"><span>Assessment confidence</span><b>{balance?.assessmentConfidence ?? claim.confidenceScore}%</b></div>{balance && <section className="claim-evidence-balance"><div><span>Supporting paths</span><b className="supports">{balance.support}</b></div><div><span>Refuting paths</span><b className="refutes">{balance.refutation}</b></div><div><span>Independent paths</span><b>{balance.independentPaths}</b></div><p>Support and refutation are compounded separately. Repeated material in a shared provenance path is discounted before aggregation.</p></section>}<div className="evidence-profile"><div><span>Evidence sources</span><b>{claim.sources.length} linked traces</b></div><div><span>Bias analysis</span><b className="context">contextual review</b></div><p>{claim.biasAnalysis}</p></div><p className="dossier-note">An expansion pass searches for missing independent support, refutation, or context for this precise claim. It deduplicates known URLs and has a visible graph budget.</p><button className="expand-claim-button" disabled={!canExpand} onClick={() => onExpand(claim)} title={canExpand ? 'Run one bounded evidence-expansion pass for this claim' : 'This graph has reached its research pass or source budget'}><Network size={14}/> Trace this claim deeper</button><button className="disintegrate-button" onClick={() => onDisintegrate(claim)}><Atom size={14}/> Disintegrate confidence card</button></motion.aside>;
+  return <motion.aside initial={{ x: -18, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -18, opacity: 0 }} onMouseDown={onFocus} className={cn('source-dossier', foreground && 'panel-foreground', isDarkMode ? 'dossier-dark' : 'dossier-light')}><button className="dossier-close" onClick={onClose} title="Close claim controls"><X size={17}/></button><div className="dossier-kicker"><Network size={14}/><span>CONFIDENCE CARD</span></div><h2>{claim.claim}</h2><div className="dossier-score"><span>Assessment confidence</span><b>{balance?.assessmentConfidence ?? claim.confidenceScore}%</b></div>{balance && <section className="claim-evidence-balance"><div><span>Supporting paths</span><b className="supports">{balance.support}</b></div><div><span>Refuting paths</span><b className="refutes">{balance.refutation}</b></div><div><span>Independent paths</span><b>{balance.independentPaths}</b></div><p>Support and refutation are compounded separately. Repeated material in a shared provenance path is discounted before aggregation.</p></section>}<div className="evidence-profile"><div><span>Evidence sources</span><b>{claim.sources.length} linked traces</b></div><div><span>Bias analysis</span><b className="context">contextual review</b></div><p>{claim.biasAnalysis}</p></div><p className="dossier-note">An expansion pass searches for missing independent support, refutation, or context for this precise claim. It deduplicates known URLs and has a visible graph budget.</p><button className="expand-claim-button" disabled={!canExpand} onClick={() => onExpand(claim)} title={canExpand ? 'Run one bounded evidence-expansion pass for this claim' : 'This graph has reached its research pass or source budget'}><Network size={14}/> Trace this claim deeper</button><button className="disintegrate-button" onClick={() => onDisintegrate(claim)}><Atom size={14}/> Disintegrate confidence card</button></motion.aside>;
 }
 
-function ResearchBriefPanel({ summary, artifact, isDarkMode, onClose }: { summary: string; artifact: VerificationResult | null; isDarkMode: boolean; onClose: () => void }) {
+function ResearchBriefPanel({ summary, artifact, isDarkMode, isStale, regenerating, onClose, onExport, onRegenerate }: { summary: string; artifact: VerificationResult | null; isDarkMode: boolean; isStale: boolean; regenerating: boolean; onClose: () => void; onExport: () => void; onRegenerate: () => void }) {
   const canonicalUrl = (value: string) => { try { const url = new URL(value); url.hash = ''; url.search = ''; url.pathname = url.pathname.replace(/\/+$/, '') || '/'; return url.href; } catch { return value; } };
-  const sources = artifact?.branches.flatMap((branch) => branch.sources) || [];
+  const flattenSources = (sourceList: Source[]): Source[] => sourceList.flatMap((source) => [source, ...flattenSources(source.lineageSources || [])]);
+  const sources = artifact?.branches.flatMap((branch) => flattenSources(branch.sources)) || [];
   const sourceByUrl = new Map(sources.map((source) => [canonicalUrl(source.url), source]));
   const sourceTracesByUrl = new Map<string, Source[]>();
   sources.forEach((source) => {
@@ -260,10 +291,22 @@ function ResearchBriefPanel({ summary, artifact, isDarkMode, onClose }: { summar
   });
   const sharedReferencePaths = (artifact?.evidenceRelations || []).filter((relation) => relation.kind === 'shared_citation');
   const discoveryConnectors = artifact?.researchMetadata?.discoveryConnectors || [];
+  const exportBriefDocument = () => {
+    const escapeHtml = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    const title = artifact?.coreConcept || 'Sourceful research briefing';
+    const sourceLedger = graphLedgerGroups.map((group) => `<h2>${escapeHtml(group.label)}</h2><ul>${group.entries.map((entry) => `<li><a href="${escapeHtml(entry.url)}">${escapeHtml(entry.title)}</a> — ${entry.credibility === null ? 'credibility unavailable' : `credibility ${entry.credibility}%`}${entry.contribution === null ? '' : `; average path contribution ${entry.contribution}%`}</li>`).join('')}</ul>`).join('');
+    const links = interceptedLinks.length ? `<ul>${interceptedLinks.map((link) => `<li><a href="${escapeHtml(link.fromUrl)}">${escapeHtml(link.fromTitle)}</a> → <a href="${escapeHtml(link.toUrl)}">${escapeHtml(link.toTitle)}</a> — ${link.averageConfidence === null ? 'source confidence unavailable' : `average source confidence ${link.averageConfidence}%`}</li>`).join('')}</ul>` : '<p>No direct page-to-page links between active traces were intercepted in this pass.</p>';
+    const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>body{max-width:760px;margin:48px auto;color:#1f2937;font:16px/1.65 Georgia,serif;padding:0 28px}h1{font:700 30px/1.2 Arial,sans-serif}h2{margin-top:32px;font:700 17px/1.25 Arial,sans-serif;color:#8a611c}a{color:#155e9b;word-break:break-word}li{margin:9px 0}.meta{color:#6b7280;font:13px Arial,sans-serif}hr{border:0;border-top:1px solid #ddd;margin:28px 0}</style></head><body><h1>${escapeHtml(title)}</h1><p class="meta">Sourceful research briefing · exported ${escapeHtml(new Date().toLocaleString())}</p><hr><div>${escapeHtml(summary).replace(/\n/g, '<br>')}</div><h2>Graph source ledger</h2><p>Source scores describe the displayed evidence trace, not whether a claim is true.</p>${sourceLedger}<h2>Intercepted source links</h2>${links}</body></html>`;
+    const blob = new Blob(['\ufeff', documentHtml], { type: 'application/msword;charset=utf-8' });
+    const href = URL.createObjectURL(blob); const anchor = document.createElement('a');
+    anchor.href = href; anchor.download = `sourceful-research-brief-${new Date().toISOString().slice(0, 10)}.doc`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
+    onExport();
+  };
   return (
     <motion.div initial={{ opacity: 0, backdropFilter: 'blur(0px)' }} animate={{ opacity: 1, backdropFilter: 'blur(18px)' }} exit={{ opacity: 0, backdropFilter: 'blur(0px)' }} transition={{ duration: .22 }} className="research-brief-modal" onMouseDown={onClose}>
       <motion.aside initial={{ y: 24, opacity: 0, scale: .98, filter: 'blur(7px)' }} animate={{ y: 0, opacity: 1, scale: 1, filter: 'blur(0px)' }} exit={{ y: 24, opacity: 0, scale: .98, filter: 'blur(7px)' }} transition={{ type: 'spring', stiffness: 230, damping: 24 }} role="dialog" aria-modal="true" aria-label="Research briefing" onMouseDown={(event) => event.stopPropagation()} className={cn('research-brief-panel', isDarkMode ? 'dossier-dark' : 'dossier-light')}>
-        <div className="dossier-topline"><span><Sparkles size={14}/> Research briefing</span><button onClick={onClose} title="Close briefing"><X size={17}/></button></div>
+        <div className="dossier-topline"><span><Sparkles size={14}/> Research briefing</span><div className="brief-panel-actions">{isStale && <button onClick={onRegenerate} disabled={regenerating} title="Rewrite the briefing with the newly added evidence"><Sparkles size={14}/><span>{regenerating ? 'WRITING' : 'REGENERATE'}</span></button>}<button onClick={exportBriefDocument} title="Download this briefing as a Word-compatible document"><Download size={14}/><span>DOC</span></button><button onClick={onClose} title="Close briefing"><X size={17}/></button></div></div>
+        {isStale && <div className="brief-refresh-notice"><Network size={14}/><span>New evidence was added after this briefing. Regenerate it before treating it as a current synthesis.</span></div>}
         <p>{summary}</p>
         {(discoveryConnectors.length || sharedReferencePaths.length) ? <section className="brief-link-ledger"><div><Network size={13}/><span>Research provenance</span><small>{sharedReferencePaths.length} shared-reference path{sharedReferencePaths.length === 1 ? '' : 's'}</small></div>{discoveryConnectors.length ? <p>Route-aware metadata leads consulted: {discoveryConnectors.join(' · ')}. These are discovery aids, not evidence by themselves.</p> : null}{sharedReferencePaths.length ? <p>{sharedReferencePaths.length} active-source connection{sharedReferencePaths.length === 1 ? '' : 's'} share an observed external reference. Treat this as possible common provenance, not independent corroboration.</p> : null}</section> : null}
         <section className="brief-link-ledger brief-source-ledger">
@@ -280,8 +323,10 @@ function ResearchBriefPanel({ summary, artifact, isDarkMode, onClose }: { summar
   );
 }
 
-function ResultsToolbar({ isDarkMode, viewMode, labelMode, driftPaused, summarising, expanding, canExpand, onViewMode, onLabelMode, onDriftToggle, onSummary, onExpand, onSave, onExport, onLibrary, onInfo, onTheme, onNewSearch }: { isDarkMode: boolean; viewMode: '3d' | '2d'; labelMode: 'hover' | 'all'; driftPaused: boolean; summarising: boolean; expanding: boolean; canExpand: boolean; onViewMode: (mode: '3d' | '2d') => void; onLabelMode: () => void; onDriftToggle: () => void; onSummary: () => void; onExpand: () => void; onSave: () => void; onExport: () => void; onLibrary: () => void; onInfo: () => void; onTheme: () => void; onNewSearch: () => void }) {
-  return <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} className="result-toolbar"><div className={`result-brand text-xl font-serif tracking-[0.22em] uppercase ${isDarkMode ? 'text-amber-50' : 'text-slate-900'}`}>Sourceful</div><div className="result-actions"><div className={`result-mode-cluster flex items-center rounded-full border p-1 backdrop-blur-md ${isDarkMode ? 'bg-slate-900/75 border-white/10' : 'bg-white/80 border-slate-200'}`}><button aria-label="3D discovery view" onClick={() => onViewMode('3d')} className={`view-mode-button ${viewMode === '3d' ? 'selected' : ''}`}><Box size={13}/><span>Discovery</span></button><button aria-label="2D board view" onClick={() => onViewMode('2d')} className={`view-mode-button ${viewMode === '2d' ? 'selected' : ''}`}><PanelsTopLeft size={13}/><span>Board</span></button>{viewMode === '3d' && <><button aria-label="Toggle graph labels" onClick={onLabelMode} className={`view-mode-button ${labelMode === 'all' ? 'selected' : ''}`} title={labelMode === 'all' ? 'Labels are visible for every node' : 'Labels appear only on hover'}><Tags size={13}/><span>Labels: {labelMode === 'all' ? 'All' : 'Hover'}</span></button><button aria-label={driftPaused ? 'Resume ambient graph drift' : 'Pause ambient graph drift'} onClick={onDriftToggle} className={`view-mode-button ${driftPaused ? 'selected' : ''}`} title={driftPaused ? 'Resume ambient graph drift' : 'Pause ambient graph drift; pan, orbit, and zoom remain available'}>{driftPaused ? <Play size={13}/> : <Pause size={13}/>}<span>Drift: {driftPaused ? 'Off' : 'On'}</span></button></>}<button aria-label="Generate research briefing" onClick={onSummary} className="view-mode-button" title="Generate a careful research briefing"><Sparkles size={13}/><span>{summarising ? 'Writing' : 'Brief'}</span></button><button aria-label="Extend the evidence graph" onClick={onExpand} disabled={!canExpand || expanding} className="view-mode-button" title={canExpand ? 'Run one bounded, deduplicated pass for missing support, refutation, and context' : 'This graph has reached its visible research budget'}><Network size={13}/><span>{expanding ? 'Tracing' : 'Extend'}</span></button><button aria-label="Save graph to browser" onClick={onSave} className="view-mode-button" title="Save this knowledge graph to your browser"><Save size={13}/><span>Save</span></button><button aria-label="Export evidence as CSV" onClick={onExport} className="view-mode-button" title="Export claims and sources as CSV"><Download size={13}/><span>CSV</span></button></div><div className="result-utility"><button aria-label="Saved research library" onClick={onLibrary} title="Saved research library"><FolderOpen size={16}/></button><button aria-label="How Sourceful evaluates evidence" onClick={onInfo} title="How Sourceful evaluates evidence"><Info size={16}/></button><button aria-label="Toggle theme" onClick={onTheme} title="Toggle theme">{isDarkMode ? <Sun size={16}/> : <Moon size={16}/>}</button></div><button aria-label="Start new search" onClick={onNewSearch} className={`result-new-search text-sm transition-colors px-4 py-2 rounded-full backdrop-blur-md border ${isDarkMode ? 'text-white/70 hover:text-white bg-slate-900/70 hover:bg-slate-900 border-white/10' : 'text-slate-600 hover:text-slate-900 bg-white/80 hover:bg-white border-slate-200'}`}><span>New Search</span><Search size={15}/></button></div></motion.div>;
+function ResultsToolbar({ isDarkMode, viewMode, labelMode, driftPaused, summarising, expanding, canExpand, hasBrief, briefStale, onViewMode, onLabelMode, onDriftToggle, onSummary, onExpand, onSave, onExport, onLibrary, onInfo, onTheme, onNewSearch }: { isDarkMode: boolean; viewMode: '3d' | '2d'; labelMode: 'hover' | 'all'; driftPaused: boolean; summarising: boolean; expanding: boolean; canExpand: boolean; hasBrief: boolean; briefStale: boolean; onViewMode: (mode: '3d' | '2d') => void; onLabelMode: () => void; onDriftToggle: () => void; onSummary: () => void; onExpand: () => void; onSave: () => void; onExport: () => void; onLibrary: () => void; onInfo: () => void; onTheme: () => void; onNewSearch: () => void }) {
+  const briefLabel = summarising ? 'Writing' : briefStale ? 'Regenerate' : hasBrief ? 'Open brief' : 'Brief';
+  const briefTitle = summarising ? 'Generating research briefing' : briefStale ? 'New evidence has been added; regenerate the briefing' : hasBrief ? 'Open saved research briefing' : 'Generate a careful research briefing';
+  return <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} className="result-toolbar"><div className={`result-brand text-xl font-serif tracking-[0.22em] uppercase ${isDarkMode ? 'text-amber-50' : 'text-slate-900'}`}>Sourceful</div><div className="result-actions"><div className={`result-mode-cluster flex items-center rounded-full border p-1 backdrop-blur-md ${isDarkMode ? 'bg-slate-900/75 border-white/10' : 'bg-white/80 border-slate-200'}`}><button aria-label="3D discovery view" onClick={() => onViewMode('3d')} className={`view-mode-button ${viewMode === '3d' ? 'selected' : ''}`}><Box size={13}/><span>Discovery</span></button><button aria-label="2D board view" onClick={() => onViewMode('2d')} className={`view-mode-button ${viewMode === '2d' ? 'selected' : ''}`}><PanelsTopLeft size={13}/><span>Board</span></button>{viewMode === '3d' && <><button aria-label="Toggle graph labels" onClick={onLabelMode} className={`view-mode-button ${labelMode === 'all' ? 'selected' : ''}`} title={labelMode === 'all' ? 'Labels are visible for every node' : 'Labels appear only on hover'}><Tags size={13}/><span>Labels: {labelMode === 'all' ? 'All' : 'Hover'}</span></button><button aria-label={driftPaused ? 'Resume ambient graph drift' : 'Pause ambient graph drift'} onClick={onDriftToggle} className={`view-mode-button ${driftPaused ? 'selected' : ''}`} title={driftPaused ? 'Resume ambient graph drift' : 'Pause ambient graph drift; pan, orbit, and zoom remain available'}>{driftPaused ? <Play size={13}/> : <Pause size={13}/>}<span>Drift: {driftPaused ? 'Off' : 'On'}</span></button></>}<button aria-label={briefTitle} onClick={onSummary} disabled={summarising} className={`view-mode-button brief-button ${summarising ? 'is-writing' : ''} ${briefStale ? 'needs-refresh' : ''}`} title={briefTitle}><Sparkles size={13}/><span>{briefLabel}</span></button><button aria-label="Extend the evidence graph" onClick={onExpand} disabled={!canExpand || expanding} className="view-mode-button" title={canExpand ? 'Run one bounded, deduplicated pass for missing support, refutation, and context' : 'This graph has reached its visible research budget'}><Network size={13}/><span>{expanding ? 'Tracing' : 'Extend'}</span></button><button aria-label="Save graph to browser" onClick={onSave} className="view-mode-button" title="Save this knowledge graph to your browser"><Save size={13}/><span>Save</span></button><button aria-label="Export evidence as CSV" onClick={onExport} className="view-mode-button" title="Export claims and sources as CSV"><Download size={13}/><span>CSV</span></button></div><div className="result-utility"><button aria-label="Saved research library" onClick={onLibrary} title="Saved research library"><FolderOpen size={16}/></button><button aria-label="How Sourceful evaluates evidence" onClick={onInfo} title="How Sourceful evaluates evidence"><Info size={16}/></button><button aria-label="Toggle theme" onClick={onTheme} title="Toggle theme">{isDarkMode ? <Sun size={16}/> : <Moon size={16}/>}</button></div><button aria-label="Start new search" onClick={onNewSearch} className={`result-new-search text-sm transition-colors px-4 py-2 rounded-full backdrop-blur-md border ${isDarkMode ? 'text-white/70 hover:text-white bg-slate-900/70 hover:bg-slate-900 border-white/10' : 'text-slate-600 hover:text-slate-900 bg-white/80 hover:bg-white border-slate-200'}`}><span>New Search</span><Search size={15}/></button></div></motion.div>;
 }
 
 export default function App() {
@@ -295,16 +340,22 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [selectedClaim, setSelectedClaim] = useState<Branch | null>(null);
+  const [dossierFocus, setDossierFocus] = useState<'source' | 'claim'>('source');
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
   const [labelMode, setLabelMode] = useState<'hover' | 'all'>('hover');
   const [graphDriftPaused, setGraphDriftPaused] = useState(false);
   const [googleCrosscheck, setGoogleCrosscheck] = useState(false);
   const [researchMode, setResearchMode] = useState('auto');
   const [artifacts, setArtifacts] = useState<SavedArtifact[]>([]);
+  const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [utilityPanelFocus, setUtilityPanelFocus] = useState<'library' | 'info'>('library');
   const [summary, setSummary] = useState('');
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [briefStale, setBriefStale] = useState(false);
   const [summarising, setSummarising] = useState(false);
   const [expanding, setExpanding] = useState(false);
+  const [lineageTracingSourceId, setLineageTracingSourceId] = useState<string | null>(null);
   const [disintegratingSourceId, setDisintegratingSourceId] = useState<string | null>(null);
   const [disintegratingClaimId, setDisintegratingClaimId] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
@@ -351,6 +402,14 @@ export default function App() {
 
   useEffect(() => () => { if (interactionNoticeTimerRef.current) window.clearTimeout(interactionNoticeTimerRef.current); }, []);
 
+  // Errors are notices, not permanent screen furniture. The user has enough time to read
+  // the message, while a new action or error replaces the active notice immediately.
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(''), 6_500);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
   const hapticTick = () => {
     if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(8);
   };
@@ -363,28 +422,40 @@ export default function App() {
   const persistArtifacts = (next: SavedArtifact[]) => { setArtifacts(next); localStorage.setItem(artifactStorageKey, JSON.stringify(next)); };
   const saveArtifact = () => {
     if (!result) return;
-    const artifact: SavedArtifact = { id: crypto.randomUUID(), title: result.coreConcept.slice(0, 90), createdAt: new Date().toISOString(), query, model, result, summary: summary || undefined };
-    persistArtifacts([artifact, ...artifacts].slice(0, 40));
-    announceInteraction('Knowledge graph saved to your library');
+    const existing = activeArtifactId ? artifacts.find((artifact) => artifact.id === activeArtifactId) : undefined;
+    const artifact: SavedArtifact = { id: existing?.id || crypto.randomUUID(), title: existing?.title || result.coreConcept.slice(0, 90), createdAt: existing?.createdAt || new Date().toISOString(), query, model, result, summary: summary || undefined, briefStale: summary ? briefStale : undefined };
+    persistArtifacts(existing ? artifacts.map((candidate) => candidate.id === artifact.id ? artifact : candidate) : [artifact, ...artifacts].slice(0, 40));
+    setActiveArtifactId(artifact.id);
+    announceInteraction(existing ? 'Saved research updated in your library' : 'Knowledge graph saved to your library');
+  };
+  const syncActiveArtifact = (nextResult: VerificationResult, nextSummary: string, nextBriefStale: boolean) => {
+    if (!activeArtifactId) return;
+    const existing = artifacts.find((artifact) => artifact.id === activeArtifactId);
+    if (!existing) return;
+    persistArtifacts(artifacts.map((artifact) => artifact.id === activeArtifactId ? { ...artifact, query, model, result: nextResult, summary: nextSummary || undefined, briefStale: nextSummary ? nextBriefStale : undefined } : artifact));
   };
   const exportEvidenceCsv = () => {
     if (!result) return;
     const quote = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""').replace(/[\r\n]+/g, ' ')}"`;
-    const header = ['core_concept', 'overall_assessment_confidence', 'claim', 'claim_assessment_confidence', 'claim_verdict', 'compounded_support', 'compounded_refutation', 'independent_paths', 'claim_bias_analysis', 'source_title', 'source_url', 'source_snippet', 'cited_text', 'credibility_score', 'path_contribution', 'path_source_quality', 'path_claim_relevance', 'path_directness', 'path_independence', 'path_provenance_group', 'is_dodgy', 'author', 'published_at', 'source_type', 'evidence_type', 'stance', 'citations', 'observed_active_links', 'authority', 'evidence_quality', 'independence', 'recency', 'transparency', 'corroboration', 'citation_network', 'semantic_depth'];
-    const rows = result.branches.flatMap((branch) => branch.sources.map((source) => [result.coreConcept, result.confidenceScore, branch.claim, branch.evidenceBalance?.assessmentConfidence ?? branch.confidenceScore, branch.verdict, branch.evidenceBalance?.support, branch.evidenceBalance?.refutation, branch.evidenceBalance?.independentPaths, branch.biasAnalysis, source.title, source.url, source.snippet, source.citedText, source.credibilityScore, source.credibilityPath?.compoundedContribution, source.credibilityPath?.sourceQuality, source.credibilityPath?.claimRelevance, source.credibilityPath?.directness, source.credibilityPath?.independence, source.credibilityPath?.provenanceGroup, source.isDodgy, source.author, source.publishedAt, source.evidenceProfile?.sourceType, source.evidenceProfile?.evidenceType, source.evidenceProfile?.stance, source.citations, source.observedReferenceCount, source.metrics?.authority, source.metrics?.evidenceQuality, source.metrics?.independence, source.metrics?.recency, source.metrics?.transparency, source.metrics?.corroboration, source.metrics?.citationNetwork, source.metrics?.semanticDepth]));
+    const header = ['core_concept', 'overall_assessment_confidence', 'claim', 'claim_assessment_confidence', 'claim_verdict', 'compounded_support', 'compounded_refutation', 'independent_paths', 'claim_bias_analysis', 'source_relation', 'lineage_parent_id', 'source_title', 'source_url', 'source_snippet', 'cited_text', 'credibility_score', 'path_contribution', 'path_source_quality', 'path_claim_relevance', 'path_directness', 'path_independence', 'path_provenance_group', 'is_dodgy', 'author', 'published_at', 'source_type', 'evidence_type', 'stance', 'citations', 'observed_active_links', 'authority', 'evidence_quality', 'independence', 'recency', 'transparency', 'corroboration', 'citation_network', 'semantic_depth'];
+    const flattenRows = (branch: Branch, sources: Source[], relation = 'direct trace', parentId = ''): unknown[][] => sources.flatMap((source) => [[result.coreConcept, result.confidenceScore, branch.claim, branch.evidenceBalance?.assessmentConfidence ?? branch.confidenceScore, branch.verdict, branch.evidenceBalance?.support, branch.evidenceBalance?.refutation, branch.evidenceBalance?.independentPaths, branch.biasAnalysis, relation, parentId, source.title, source.url, source.snippet, source.citedText, source.credibilityScore, source.credibilityPath?.compoundedContribution, source.credibilityPath?.sourceQuality, source.credibilityPath?.claimRelevance, source.credibilityPath?.directness, source.credibilityPath?.independence, source.credibilityPath?.provenanceGroup, source.isDodgy, source.author, source.publishedAt, source.evidenceProfile?.sourceType, source.evidenceProfile?.evidenceType, source.evidenceProfile?.stance, source.citations, source.observedReferenceCount, source.metrics?.authority, source.metrics?.evidenceQuality, source.metrics?.independence, source.metrics?.recency, source.metrics?.transparency, source.metrics?.corroboration, source.metrics?.citationNetwork, source.metrics?.semanticDepth], ...flattenRows(branch, source.lineageSources || [], 'observed lineage lead', source.graphId || '')]);
+    const rows = result.branches.flatMap((branch) => flattenRows(branch, branch.sources));
     const csv = [header, ...rows].map((row) => row.map(quote).join(',')).join('\n');
     const file = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const href = URL.createObjectURL(file); const anchor = document.createElement('a');
     anchor.href = href; anchor.download = `sourceful-evidence-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
     announceInteraction('Evidence CSV prepared for download');
   };
-  const closeViewportPanels = () => { setSelectedSource(null); setSelectedClaim(null); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false); setSummary(''); setGuideVisible(false); };
-  const restoreArtifact = (artifact: SavedArtifact) => { setResult(identifyGraph(artifact.result)); setQuery(artifact.query); setModel(artifact.model); setSelectedSource(null); setSelectedClaim(null); setInfoOpen(false); setKeyVaultOpen(false); setSummary(artifact.summary || ''); setAppState('results'); setLibraryOpen(false); };
-  const selectSource = (source: Source) => { closeViewportPanels(); setSelectedSource(source); };
-  const selectClaim = (claim: Branch) => { closeViewportPanels(); setSelectedClaim(claim); };
-  const openLibrary = () => { closeViewportPanels(); setLibraryOpen(true); };
-  const openInfo = () => { closeViewportPanels(); setInfoOpen(true); };
-  const openKeyVault = () => { closeViewportPanels(); setKeyVaultOpen(true); };
+  const restoreArtifact = (artifact: SavedArtifact) => { setResult(identifyGraph(artifact.result)); setQuery(artifact.query); setModel(artifact.model); setActiveArtifactId(artifact.id); setSelectedSource(null); setSelectedClaim(null); setSummary(artifact.summary || ''); setBriefStale(Boolean(artifact.summary && artifact.briefStale)); setBriefOpen(false); setAppState('results'); };
+  const selectSource = (source: Source) => { setSelectedSource(source); setDossierFocus('source'); };
+  const selectClaim = (claim: Branch) => { setSelectedClaim(claim); setDossierFocus('claim'); };
+  const openLibrary = () => { setLibraryOpen(true); setUtilityPanelFocus('library'); };
+  const openInfo = () => { setInfoOpen(true); setUtilityPanelFocus('info'); };
+  const openKeyVault = () => { setKeyVaultOpen(true); };
+  const toggleComposerConfig = () => {
+    if (configOpen) { setConfigOpen(false); return; }
+    setConfigOpen(true);
+  };
   const disintegrateSource = (source: Source) => {
     if (!result || disintegratingSourceId || disintegratingClaimId || !source.graphId) return;
     setDisintegratingSourceId(source.graphId);
@@ -401,12 +472,12 @@ export default function App() {
   };
   const generateSummary = async () => {
     if (!result || summarising) return;
-    closeViewportPanels();
+    if (summary && !briefStale) { setBriefOpen(true); return; }
     setSummarising(true); setError('');
     try {
       const response = await fetch('/api/summarize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artifact: result, model, ...(apiKey ? { apiKey } : {}) }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Unable to generate briefing.');
-      setSummary(data.summary);
+      setSummary(data.summary); setBriefStale(false); setBriefOpen(true); syncActiveArtifact(result, data.summary, false);
     } catch (err: any) { setError(err.message || 'Unable to generate briefing.'); } finally { setSummarising(false); }
   };
 
@@ -416,20 +487,42 @@ export default function App() {
     if (!apiKey) { setError('Connect your OpenAI API key to run an additional evidence pass.'); openKeyVault(); return; }
     const completed = result.researchMetadata?.completedPasses || 1;
     const maxPasses = result.researchMetadata?.maxPasses || 4;
-    const sourceCount = result.branches.reduce((total, branch) => total + branch.sources.length, 0);
+    const sourceCount = sourceTraceCount(result.branches);
     const nodeBudget = result.researchMetadata?.nodeBudget || 60;
     if (completed >= maxPasses || sourceCount >= nodeBudget) { setError('This graph has reached its visible research budget. Save it, review the sources, or start a more focused follow-up question.'); return; }
-    closeViewportPanels();
     setError(''); setExpanding(true); setAppState('loading'); requestControllerRef.current = new AbortController();
     try {
       const response = await fetch('/api/expand', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ artifact:result, model, focusClaim:claim?.claim || '', apiKey }), signal:requestControllerRef.current.signal });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to extend this evidence graph.');
-      setResult(identifyGraph(data)); setGuideVisible(true); setAppState('results');
+      const expandedResult = identifyGraph(data); const nextBriefStale = Boolean(summary);
+      setResult(expandedResult); if (nextBriefStale) setBriefStale(true); syncActiveArtifact(expandedResult, summary, nextBriefStale); setGuideVisible(true); setAppState('results');
     } catch (err: any) {
       if (err?.name !== 'AbortError') setError(err.message || 'Unable to extend this evidence graph.');
       setAppState('results');
     } finally { setExpanding(false); requestControllerRef.current = null; }
+  };
+
+  const traceSourceLineage = async (source: Source) => {
+    if (!result || !source.graphId || source.isLineageLead || lineageTracingSourceId) return;
+    if (source.lineageSources?.length) { announceInteraction('Observed source lineage is already mapped for this trace'); return; }
+    if (!apiKey) { setError('Connect your OpenAI API key to trace a source lineage.'); openKeyVault(); return; }
+    const branch = result.branches.find((candidate) => candidate.sources.some((item) => item.graphId === source.graphId));
+    if (!branch) { setError('This source is no longer a direct trace in the active graph.'); return; }
+    const budget = result.researchMetadata?.nodeBudget || 60;
+    if (sourceTraceCount(result.branches) >= budget) { setError('This graph has reached its visible source budget.'); return; }
+    setLineageTracingSourceId(source.graphId); setError('');
+    try {
+      const response = await fetch('/api/lineage', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ artifact:result, sourceId:source.graphId, claim:branch.claim, model, apiKey }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Unable to trace this source lineage.');
+      const children = (Array.isArray(data.lineageSources) ? data.lineageSources : []).map((child: Source, index: number) => ({ ...child, graphId:`${source.graphId}:lineage-${index}`, lineageParentId:source.graphId, isLineageLead:true }));
+      if (!children.length) { announceInteraction(data.note || 'No claim-relevant outgoing source references were available.'); return; }
+      const nextResult = identifyGraph({ ...result, branches:result.branches.map((candidate) => ({ ...candidate, sources:candidate.sources.map((item) => item.graphId === source.graphId ? { ...item, lineageSources:children } : item) })) });
+      setResult(nextResult);
+      setSelectedSource(nextResult.branches.flatMap((candidate) => candidate.sources).find((item) => item.graphId === source.graphId) || null);
+      const nextBriefStale = Boolean(summary); if (nextBriefStale) setBriefStale(true); syncActiveArtifact(nextResult, summary, nextBriefStale);
+      announceInteraction(`${children.length} observed lineage lead${children.length === 1 ? '' : 's'} added outside claim scoring`);
+    } catch (err: any) { setError(err.message || 'Unable to trace this source lineage.'); } finally { setLineageTracingSourceId(null); }
   };
 
   const handleSubmit = async (e?: React.FormEvent, useDemo = false, queryOverride?: string) => {
@@ -484,7 +577,7 @@ export default function App() {
       setResult(identifyGraph(data));
       if (useDemo) setQuery(requestText);
       setSelectedSource(null); setSelectedClaim(null); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false);
-      setSummary('');
+      setSummary(''); setBriefOpen(false); setBriefStale(false); setActiveArtifactId(null);
       setGuideVisible(true);
       setAppState('results');
     } catch (err: any) {
@@ -499,7 +592,7 @@ export default function App() {
     setError('Research paused. The most recently completed graph has been kept.');
     setAppState(result ? 'results' : 'idle');
   };
-  const resetSearch = () => { setAppState('idle'); setResult(null); setQuery(''); setSelectedFile(null); setSelectedSource(null); setSelectedClaim(null); setSummary(''); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false); setConfigOpen(false); setGuideVisible(true); setSearchPanelKey((value) => value + 1); };
+  const resetSearch = () => { setAppState('idle'); setResult(null); setQuery(''); setSelectedFile(null); setSelectedSource(null); setSelectedClaim(null); setSummary(''); setBriefOpen(false); setBriefStale(false); setActiveArtifactId(null); setLibraryOpen(false); setInfoOpen(false); setKeyVaultOpen(false); setConfigOpen(false); setGuideVisible(true); setSearchPanelKey((value) => value + 1); };
 
   const isCenter = appState === 'idle' || appState === 'encrypting' || appState === 'loading';
 
@@ -508,27 +601,28 @@ export default function App() {
       <WindborneNodes />
       {result && (appState === 'results' || appState === 'loading') && (viewMode === '3d' ? <DiscoveryUniverse data={result} isDarkMode={isDarkMode} labelMode={labelMode} driftPaused={graphDriftPaused} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceId={selectedSource?.graphId} selectedClaimId={selectedClaim?.graphId} disintegratingSourceId={disintegratingSourceId} disintegratingClaimId={disintegratingClaimId} onDisintegrationComplete={completeSourceDisintegration} /> : <NodeGraph data={result} isDarkMode={isDarkMode} onSourceSelect={selectSource} onClaimSelect={selectClaim} selectedSourceId={selectedSource?.graphId} selectedClaimId={selectedClaim?.graphId} disintegratingSourceId={disintegratingSourceId} disintegratingClaimId={disintegratingClaimId} onDisintegrationComplete={completeSourceDisintegration} />)}
       {createPortal(<div className="sourceful-viewport-ui">
+        <AnimatePresence>{appState === 'loading' && <ResearchLoadingModal isDarkMode={isDarkMode} stage={researchStage} onCancel={cancelResearch}/>}</AnimatePresence>
         {appState !== 'results' && <div className="utility-controls flex items-center gap-4">
           <button onClick={openLibrary} className={`p-2 transition-colors ${isDarkMode ? 'text-white/50 hover:text-white' : 'text-slate-500 hover:text-slate-800'}`} title="Saved research library"><FolderOpen size={20} /></button>
           <button onClick={openInfo} className={`p-2 transition-colors ${isDarkMode ? 'text-white/50 hover:text-white' : 'text-slate-500 hover:text-slate-800'}`} title="How Sourceful evaluates evidence"><Info size={20} /></button>
           <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 transition-colors ${isDarkMode ? 'text-white/50 hover:text-white' : 'text-slate-500 hover:text-slate-800'}`} title="Toggle theme">{isDarkMode ? <Sun size={20} /> : <Moon size={20} />}</button>
         </div>}
-        {appState === 'results' && <ResultsToolbar isDarkMode={isDarkMode} viewMode={viewMode} labelMode={labelMode} driftPaused={graphDriftPaused} summarising={summarising} expanding={expanding} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && result.branches.reduce((total, branch) => total + branch.sources.length, 0) < (result.researchMetadata?.nodeBudget || 60))} onViewMode={setViewMode} onLabelMode={() => setLabelMode((mode) => mode === 'hover' ? 'all' : 'hover')} onDriftToggle={() => setGraphDriftPaused((paused) => !paused)} onSummary={generateSummary} onExpand={() => void expandInvestigation()} onSave={saveArtifact} onExport={exportEvidenceCsv} onLibrary={openLibrary} onInfo={openInfo} onTheme={() => setIsDarkMode(!isDarkMode)} onNewSearch={resetSearch}/>}
-        <AnimatePresence>{selectedSource && <SourceDossier source={selectedSource} isDarkMode={isDarkMode} onClose={() => setSelectedSource(null)} onDisintegrate={disintegrateSource} />}{selectedClaim && <ClaimDossier claim={selectedClaim} isDarkMode={isDarkMode} onClose={() => setSelectedClaim(null)} onDisintegrate={disintegrateClaim} onExpand={(claim) => void expandInvestigation(claim)} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && result.branches.reduce((total, branch) => total + branch.sources.length, 0) < (result.researchMetadata?.nodeBudget || 60))} />}{libraryOpen && <ArtifactLibrary artifacts={artifacts} isDarkMode={isDarkMode} onRestore={restoreArtifact} onRename={(id, title) => persistArtifacts(artifacts.map((artifact) => artifact.id === id ? { ...artifact, title } : artifact))} onDelete={(id) => persistArtifacts(artifacts.filter((artifact) => artifact.id !== id))} onClose={() => setLibraryOpen(false)} />}{infoOpen && <AboutPanel isDarkMode={isDarkMode} onClose={() => setInfoOpen(false)} />}{keyVaultOpen && <ApiKeyVault isDarkMode={isDarkMode} apiKey={apiKey} onUse={setApiKey} onDisconnect={() => setApiKey('')} onClose={() => setKeyVaultOpen(false)} />}{summary && <ResearchBriefPanel summary={summary} artifact={result} isDarkMode={isDarkMode} onClose={() => setSummary('')} />}{result && appState === 'results' && !summary && !selectedSource && !selectedClaim && !libraryOpen && !infoOpen && !keyVaultOpen && guideVisible && guideEnabled && <ExploreGuide viewMode={viewMode} onClose={() => setGuideVisible(false)} onDisable={() => { localStorage.setItem('sourceful-explore-guide', 'off'); setGuideEnabled(false); setGuideVisible(false); }} />}{interactionNotice && <InteractionToast message={interactionNotice}/>}</AnimatePresence>
+        {appState === 'results' && <ResultsToolbar isDarkMode={isDarkMode} viewMode={viewMode} labelMode={labelMode} driftPaused={graphDriftPaused} summarising={summarising} expanding={expanding} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && sourceTraceCount(result.branches) < (result.researchMetadata?.nodeBudget || 60))} hasBrief={Boolean(summary)} briefStale={briefStale} onViewMode={setViewMode} onLabelMode={() => setLabelMode((mode) => mode === 'hover' ? 'all' : 'hover')} onDriftToggle={() => setGraphDriftPaused((paused) => !paused)} onSummary={generateSummary} onExpand={() => void expandInvestigation()} onSave={saveArtifact} onExport={exportEvidenceCsv} onLibrary={openLibrary} onInfo={openInfo} onTheme={() => setIsDarkMode(!isDarkMode)} onNewSearch={resetSearch}/>}
+        <AnimatePresence>{selectedSource && <SourceDossier source={selectedSource} isDarkMode={isDarkMode} onClose={() => setSelectedSource(null)} onDisintegrate={disintegrateSource} onTraceLineage={traceSourceLineage} tracingLineage={lineageTracingSourceId === selectedSource.graphId} canTraceLineage={Boolean(result && !result.isDemo)} foreground={dossierFocus === 'source'} onFocus={() => setDossierFocus('source')} />}{selectedClaim && <ClaimDossier claim={selectedClaim} isDarkMode={isDarkMode} onClose={() => setSelectedClaim(null)} onDisintegrate={disintegrateClaim} onExpand={(claim) => void expandInvestigation(claim)} canExpand={Boolean(result && !result.isDemo && (result.researchMetadata?.completedPasses || 1) < (result.researchMetadata?.maxPasses || 4) && sourceTraceCount(result.branches) < (result.researchMetadata?.nodeBudget || 60))} foreground={dossierFocus === 'claim'} onFocus={() => setDossierFocus('claim')} />}{libraryOpen && <ArtifactLibrary artifacts={artifacts} isDarkMode={isDarkMode} onRestore={restoreArtifact} onRename={(id, title) => persistArtifacts(artifacts.map((artifact) => artifact.id === id ? { ...artifact, title } : artifact))} onDelete={(id) => persistArtifacts(artifacts.filter((artifact) => artifact.id !== id))} onClose={() => setLibraryOpen(false)} foreground={utilityPanelFocus === 'library'} onFocus={() => setUtilityPanelFocus('library')} />}{infoOpen && <AboutPanel isDarkMode={isDarkMode} onClose={() => setInfoOpen(false)} foreground={utilityPanelFocus === 'info'} onFocus={() => setUtilityPanelFocus('info')} />}{keyVaultOpen && <ApiKeyVault isDarkMode={isDarkMode} apiKey={apiKey} onUse={setApiKey} onDisconnect={() => setApiKey('')} onClose={() => setKeyVaultOpen(false)} />}{summary && briefOpen && <ResearchBriefPanel summary={summary} artifact={result} isDarkMode={isDarkMode} isStale={briefStale} regenerating={summarising} onClose={() => setBriefOpen(false)} onExport={() => announceInteraction('Research briefing prepared for download')} onRegenerate={generateSummary} />}{result && appState === 'results' && !briefOpen && !selectedSource && !selectedClaim && !libraryOpen && !infoOpen && !keyVaultOpen && guideVisible && guideEnabled && <ExploreGuide viewMode={viewMode} onClose={() => setGuideVisible(false)} onDisable={() => { localStorage.setItem('sourceful-explore-guide', 'off'); setGuideEnabled(false); setGuideVisible(false); }} />}{interactionNotice && <InteractionToast message={interactionNotice}/>}</AnimatePresence>
       </div>, document.body)}
 
       {/* Main Content Area */}
       <main className="relative z-10 w-full h-screen flex flex-col items-center justify-center p-6 pointer-events-none">
 
         {/* Center input */}
-        {appState !== 'results' && <motion.div
+        {appState !== 'results' && appState !== 'loading' && <motion.div
           key={searchPanelKey}
           layout
           initial={false}
           animate={{
             width: isCenter ? '100%' : 320,
             maxWidth: isCenter ? '62rem' : 320,
-            minHeight: isCenter ? (appState === 'loading' ? 318 : configOpen ? 236 : 154) : 100,
+            minHeight: isCenter ? (configOpen ? 236 : 154) : 100,
             y: isCenter ? 0 : -350, // Move out of the way to top in results
             borderRadius: isCenter ? 32 : 24,
           }}
@@ -536,8 +630,7 @@ export default function App() {
           className={cn(
             "relative flex flex-col items-center justify-center shadow-2xl transition-all duration-500 pointer-events-auto",
             appState === 'idle' && configOpen ? "overflow-visible" : "overflow-hidden",
-            appState === 'encrypting' ? "shadow-[0_0_40px_rgba(74,222,128,0.3)]" : "",
-            appState === 'loading' ? "research-loading-panel shadow-[0_0_40px_rgba(59,130,246,0.3)]" : ""
+            appState === 'encrypting' ? "shadow-[0_0_40px_rgba(74,222,128,0.3)]" : ""
           )}
           style={{
             transformStyle: 'preserve-3d',
@@ -557,7 +650,6 @@ export default function App() {
           <div className={cn(
             "absolute inset-[1px] backdrop-blur-xl rounded-[inherit] z-0 pointer-events-none transition-colors duration-500",
             appState === 'encrypting' ? (isDarkMode ? "bg-green-950/40" : "bg-green-50/80") :
-            appState === 'loading' ? (isDarkMode ? "bg-blue-950/40" : "bg-blue-50/80") :
             (isDarkMode ? "bg-slate-900/40" : "bg-white/60")
           )} />
 
@@ -574,7 +666,7 @@ export default function App() {
                 {selectedFile && <span className="selected-file">{selectedFile.name}</span>}
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="upload-control" title="Attach a PDF, Word document, text file, data sheet, or image as an untrusted research lead"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.2 15c.7-1.2 1-2.5.7-3.9-.6-2-2.4-3.5-4.4-3.5h-1.2c-.7-3-3.2-5.2-6.2-5.6-3-.3-5.9 1.3-7.3 4-1.2 2.5-1 6.5.5 8.8m8.7-1.6V21"/><path d="M16 16l-4-4-4 4"/></svg> Attach</button>
                 <button type="button" onClick={() => void handleSubmit(undefined, true, demoPrompt)} className="demo-control" title="Run a simulated multi-claim Sourceful investigation without API keys"><Atom size={14}/> Guided demo</button>
-                <button type="button" onClick={() => setConfigOpen(!configOpen)} className={`config-control ${configOpen ? 'active' : ''}`} title="Configure the AI profile, research route, and Google cross-check"><SlidersHorizontal size={14}/> Configure</button>
+                <button type="button" onClick={toggleComposerConfig} className={`config-control ${configOpen ? 'active' : ''}`} title="Configure the AI profile, research route, and Google cross-check"><SlidersHorizontal size={14}/> Configure</button>
                 <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.md,.csv,.json,.pdf,.docx,.rtf,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,text/rtf,image/png,image/jpeg,image/webp" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
               </div>
               <AnimatePresence>{configOpen && <motion.div initial={{ opacity: 0, height: 0, y: -6 }} animate={{ opacity: 1, height: 'auto', y: 0 }} exit={{ opacity: 0, height: 0, y: -6 }} className="composer-config-panel"><GlassMenu label="AI profile" title="Choose depth, balance, or speed for this investigation" value={model} onChange={setModel} options={[{value:'gpt-5.6-sol',label:'Sol · depth-first'},{value:'gpt-5.6-terra',label:'Terra · balanced'},{value:'gpt-5.6-luna',label:'Luna · fast'}]}/><GlassMenu label="Research path" title="Auto uses Sourceful's route classifier; choose manually only when you need a specific method" value={researchMode} onChange={setResearchMode} options={[{value:'auto',label:'Auto — recommended'},{value:'public_claim',label:'Public claim'},{value:'historical',label:'History'},{value:'scripture',label:'Scripture'},{value:'math',label:'Maths'},{value:'document',label:'Document'}]}/><button type="button" onClick={() => setGoogleCrosscheck(!googleCrosscheck)} title="Ask Gemini Google Search for an additional, separately labelled source-discovery pass. OpenAI still adjudicates the graph." className={`crosscheck-toggle ${googleCrosscheck ? 'active' : ''}`}><ScanSearch size={14}/><span>Google cross-check {googleCrosscheck ? 'on' : 'off'}</span></button><button type="button" onClick={openKeyVault} className={`vault-trigger ${apiKey ? 'active' : ''}`} title="Use your own OpenAI API key. Keys can be encrypted on this browser with a passphrase."><Lock size={13}/><span>{apiKey ? 'Key unlocked' : hasRememberedApiKey() ? 'Unlock API key' : 'Connect API key'}</span></button></motion.div>}</AnimatePresence>
@@ -588,8 +680,6 @@ export default function App() {
             </div>
           )}
 
-          {appState === 'loading' && <ResearchBuildLoader isDarkMode={isDarkMode} stage={researchStage} onCancel={cancelResearch}/>}
-
           </div>
         </motion.div>}
 
@@ -599,6 +689,8 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
+              role="alert"
+              aria-live="assertive"
               className="absolute bottom-24 bg-red-500/10 border border-red-500/20 text-red-400 px-6 py-3 rounded-xl backdrop-blur-md"
             >
               {error}

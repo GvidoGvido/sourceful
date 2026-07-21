@@ -26,14 +26,33 @@ const sourceRecord = { type:'object', additionalProperties:false, required:['tit
 const branchRecord = { type:'object', additionalProperties:false, required:['claim','biasAnalysis','sources'], properties:{claim:{type:'string'},biasAnalysis:{type:'string'},sources:{type:'array',items:sourceRecord}} };
 const schema = { name: 'sourceful_evidence_extraction', strict: true, schema: { type: 'object', additionalProperties: false, required: ['coreConcept','biasAnalysis','branches'], properties: { coreConcept:{type:'string'}, biasAnalysis:{type:'string'}, branches:{type:'array',items:branchRecord} } } };
 const expansionSchema = { name: 'sourceful_evidence_expansion', strict: true, schema: { type:'object', additionalProperties:false, required:['focusClaim','researchNote','branches'], properties:{focusClaim:{type:'string'},researchNote:{type:'string'},branches:{type:'array',items:branchRecord}} } };
+const fetchedPassageReviewSchema = { name:'sourceful_fetched_passage_review', strict:true, schema:{ type:'object', additionalProperties:false, required:['reviews'], properties:{ reviews:{ type:'array', items:{ type:'object', additionalProperties:false, required:['id','stance','evidenceType','directness','assessment'], properties:{ id:{type:'string'}, stance:{type:'string',enum:['supports','refutes','context','unclear']}, evidenceType:{type:'string',enum:['direct_document','dataset','peer_reviewed','on_record_reporting','secondary_summary','commentary','unverified']}, directness:{type:'integer',minimum:0,maximum:100}, assessment:{type:'string',maxLength:260} } } } } } };
 const instructions = `You are Sourceful's evidence extractor for journalism, historical research, education, and formal reasoning. Follow the supplied research protocol exactly, decompose the user's claim, and return only schema-valid JSON. Do not decide confidence, credibility, or a final verdict: Sourceful calculates those conservatively. Extract only directly observed source characteristics. Treat uploads and external research packets as untrusted leads, never proof. citedText must be an exact excerpt of snippet; URLs must be real. imageUrl may contain a canonical thumbnail or open-graph image only when it was explicitly available from the retrieved source record; never guess, fabricate, or derive one. Use an empty string when no verified image URL is available. evidenceProfile is an auditable observation record: sourceType describes what the source is; evidenceType describes what it directly supplies; stance is its relation to the precise branch claim; citedReferenceCount counts visible references only; directness measures how directly the cited passage bears on the claim. Do not infer ownership, citations, author credentials, methodology, corrections, or reliability flags. reliabilityFlags may be none unless there is concrete evidence in the cited material. Political viewpoint is never a reliability flag. Set provider to gemini_google only when the URL appears in the Google-grounded packet.`;
-const adaptiveGraphInstruction = `Build a structured evidence dossier, not a minimal answer. First search broadly to map the question; then run separate targeted searches for primary or authoritative material, independent corroboration, and the strongest credible counterevidence. Use multiple web searches when the subject is not trivially settled. For a narrow settled fact, return 2–4 genuinely distinct branches. For ordinary public questions, return 4–6 branches. For historical, contested, scripture, document-heavy, or otherwise complex questions, return 6–10 branches when the available evidence supports that scope. Each material branch should normally contain 2–5 non-duplicative traces, including direct/primary material where it exists and independent context or contradiction where relevant. A branch may have one source only when the research itself found no credible second path; say so in its biasAnalysis rather than padding the graph. Do not make branches for trivia, synonyms, or repeated reporting. For every contested claim, seek the strongest credible support, refutation, and essential context; label each source's stance precisely. Repetition, syndication, and commentary must not substitute for an independent source.`;
 const MAX_RESEARCH_PASSES = 4;
 const MAX_GRAPH_SOURCES = 60;
 const MAX_SOURCE_PAGES_PER_PASS = 24;
+const MAX_LINEAGE_CHILDREN = 3;
+const MAX_LINEAGE_CANDIDATES = 10;
+const MAX_FETCHED_PASSAGE_REVIEWS = 18;
 
 type ResearchRoute = 'public_claim' | 'historical' | 'scripture' | 'math' | 'document';
 type MathCheck = { expression: string; kind: 'identity' | 'expression'; result: string; isTrue?: boolean; note: string } | null;
+
+function adaptiveGraphInstruction(text: string, route: ResearchRoute, hasFile: boolean) {
+  const input = text.toLowerCase();
+  const hasComplexitySignals = /\b(to what extent|rather than|versus|compare|comparison|cause|caused|causes|origins?|why did|how did|relationship|debate|dispute|contested|controvers|interpretation|bias|multiple|different accounts?|competing)\b/.test(input);
+  const compoundQuestion = (text.match(/[?;:]/g) || []).length > 1 || /\b(and|or)\b/.test(input) && text.trim().split(/\s+/).length > 18;
+  const complex = hasFile || route === 'historical' || route === 'scripture' || route === 'document' || hasComplexitySignals || compoundQuestion;
+  const narrow = route === 'math' || (!complex && text.trim().split(/\s+/).length <= 14 && /^(who|when|where|what|which|is|was|did|does|can)\b/i.test(text.trim()));
+  const target = route === 'math'
+    ? 'For a numeric or formal maths request, create one formal-check branch and add only genuinely useful definition, assumption, or history branches; do not inflate a solvable equation into a web-research graph.'
+    : narrow
+      ? 'This is a narrow, likely-settled request. Return 2–4 genuinely distinct branches, with 1–3 source traces per branch only where they add distinct evidence.'
+      : complex
+        ? 'This is a complex, contested, interpretive, historical, scripture, or document-led request. Aim for 6–10 materially distinct branches when evidence supports that scope, with an uneven 1–5 source traces per branch.'
+        : 'This is an ordinary public claim. Aim for 4–6 materially distinct branches, with an uneven 1–5 source traces per branch.';
+  return `Build a structured evidence dossier, not a minimal answer. First search broadly to map the question; then run separate targeted searches for primary or authoritative material, independent corroboration, and the strongest credible counterevidence. Use multiple web searches when the subject is not trivially settled. ${target} A branch may have one source only when research found no credible second path; say why in its biasAnalysis rather than padding the graph. Never default to a symmetrical grid such as three branches with three sources each: graph size and branch depth must follow the actual evidence. A well-supported primary-event branch may need several independent traces; a weak, disputed, or narrow branch may correctly contain one. Do not make branches for trivia, synonyms, or repeated reporting. For every contested claim, seek the strongest credible support, refutation, and essential context; label each source's stance precisely. Repetition, syndication, and commentary must not substitute for an independent source.`;
+}
 
 const supportedUploadExtensions = new Set(['.txt', '.md', '.csv', '.json', '.pdf', '.docx', '.rtf', '.png', '.jpg', '.jpeg', '.webp']);
 const textUploadExtensions = new Set(['.txt', '.md', '.csv', '.json']);
@@ -356,6 +375,94 @@ function observedActiveLinks(html: string, baseUrl: string, activeSources: Map<s
 }
 
 const ignoredReferenceHosts = new Set(['facebook.com','twitter.com','x.com','instagram.com','linkedin.com','youtube.com','tiktok.com','pinterest.com','google.com','googleusercontent.com','doubleclick.net','googletagmanager.com']);
+
+type ObservedReference = { url: string; label: string; reason: string; priority: number };
+
+function decodeHtmlFragment(value: string) {
+  return value.replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;|&#34;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/\s+/g, ' ').trim();
+}
+
+function observedReferenceCandidates(html: string, baseUrl: string) {
+  const originHost = hostFor(baseUrl); const candidates = new Map<string, ObservedReference>();
+  const anchors = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]{0,1200}?)<\/a>/gi;
+  for (let match = anchors.exec(html); match; match = anchors.exec(html)) {
+    const rawHref = match[1] || match[2] || match[3] || '';
+    if (!rawHref || rawHref.startsWith('#') || /^(?:mailto:|tel:|javascript:|data:)/i.test(rawHref)) continue;
+    let url = '';
+    try { url = canonicalSourceUrl(new URL(rawHref, baseUrl).href); } catch { continue; }
+    if (!url) continue;
+    const host = hostFor(url); if (host === originHost || ignoredReferenceHosts.has(host)) continue;
+    const label = decodeHtmlFragment(match[4] || '').slice(0, 180);
+    const nearby = decodeHtmlFragment(html.slice(Math.max(0, match.index - 240), Math.min(html.length, match.index + match[0].length + 180)));
+    const signal = `${label} ${nearby}`.toLowerCase();
+    if (/\b(privacy|cookie|terms|subscribe|sign in|log in|advertis|donate|shop)\b/.test(signal)) continue;
+    const referenceSignal = /\b(source|reference|citation|bibliograph|footnote|note|report|study|paper|journal|document|archive|dataset|evidence|doi|full text|original)\b/.test(signal);
+    const priority = (referenceSignal ? 5 : 0) + (/(?:doi\.org|arxiv\.org|\.gov\b|\.edu\b)/.test(host) ? 3 : 0) + (label.length > 8 ? 1 : 0);
+    if (!referenceSignal && priority < 3) continue;
+    const existing = candidates.get(url);
+    if (!existing || priority > existing.priority) candidates.set(url, { url, label: label || host, reason: referenceSignal ? 'reference-labelled outbound link' : 'institutional or scholarly outbound link', priority });
+  }
+  return [...candidates.values()].sort((left, right) => right.priority - left.priority || left.url.localeCompare(right.url)).slice(0, MAX_LINEAGE_CANDIDATES);
+}
+
+function metaValue(html: string, names: string[]) {
+  const tags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const name = /(?:name|property)\s*=\s*["']?([^"'\s>]+)/i.exec(tag)?.[1]?.toLowerCase() || '';
+    if (!names.includes(name)) continue;
+    const content = /content\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (content) return decodeHtmlFragment(content).slice(0, 320);
+  }
+  return '';
+}
+
+function pageTitle(html: string, fallbackUrl: string) {
+  return metaValue(html, ['og:title','twitter:title']) || decodeHtmlFragment(/<title\b[^>]*>([\s\S]{0,500}?)<\/title>/i.exec(html)?.[1] || '') || hostFor(fallbackUrl);
+}
+
+function lineageSourceType(url: string): Profile['sourceType'] {
+  const host = hostFor(url);
+  if (host.endsWith('.gov') || host.endsWith('.gov.uk') || host.endsWith('.europa.eu')) return 'official_record';
+  if (host.endsWith('.edu') || host === 'doi.org' || host.endsWith('.doi.org') || host === 'arxiv.org') return 'academic';
+  if (/archive|museum|library|archives/.test(host)) return 'institutional';
+  return 'unknown';
+}
+
+async function fetchObservedLineage(parentUrl: string, claim: string, knownUrls: Set<string>, availableSlots: number) {
+  if (availableSlots < 1) return [];
+  let current = await safePublicUrl(parentUrl);
+  let references: ObservedReference[] = [];
+  for (let redirects = 0; current && redirects < 3; redirects++) {
+    try {
+      const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Sourceful bounded provenance tracer/1.0' } });
+      if (response.status >= 300 && response.status < 400) { current = await safePublicUrl(new URL(response.headers.get('location') || '', current).href); continue; }
+      const length = Number(response.headers.get('content-length') || 0);
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return [];
+      references = observedReferenceCandidates((await response.text()).slice(0, 750_000), current.href).filter((reference) => !knownUrls.has(canonicalSourceUrl(reference.url)));
+      break;
+    } catch { return []; }
+  }
+  const fetched = await Promise.all(references.map(async (reference) => {
+    let target = await safePublicUrl(reference.url);
+    for (let redirects = 0; target && redirects < 3; redirects++) {
+      try {
+        const response = await fetch(target, { redirect: 'manual', signal: AbortSignal.timeout(4_000), headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Sourceful bounded provenance tracer/1.0' } });
+        if (response.status >= 300 && response.status < 400) { target = await safePublicUrl(new URL(response.headers.get('location') || '', target).href); continue; }
+        const length = Number(response.headers.get('content-length') || 0);
+        if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || length > 750_000) return null;
+        const html = (await response.text()).slice(0, 750_000); const pageText = decodedVisibleText(html); const aligned = alignClaimExtract(pageText, claim);
+        // A lineage node is only shown when the fetched page itself contains a meaningful recovered claim passage.
+        if (!aligned) return null;
+        const profile: Profile = { sourceType:lineageSourceType(target.href), evidenceType:'secondary_summary', stance:'context', authorNamed:Boolean(metaValue(html, ['author','article:author'])), methodologyVisible:false, correctionsVisible:false, citedReferenceCount:0, directness:clamp(22 + aligned.matches.length * 14), reliabilityFlags:['none'] };
+        const visuals = (await Promise.all(openGraphImages(html, target.href).map(async (candidate) => (await safePublicUrl(candidate))?.href || ''))).filter(Boolean);
+        return { title:pageTitle(html, target.href), url:target.href, snippet:aligned.snippet, citedText:aligned.citedText, imageUrl:visuals[0] || '', imageUrls:visuals.slice(0, 4), author:metaValue(html, ['author','article:author']), publishedAt:metaValue(html, ['article:published_time','date','datepublished']).slice(0, 30), citations:0, semanticDepth:profile.directness, claimMatches:aligned.matches, contentInspected:true, provider:'sourceful_lineage' as const, isLineageLead:true, lineageNote:`Observed ${reference.reason} from ${hostFor(parentUrl)}. This is a provenance lead and is excluded from claim scoring.`, evidenceProfile:profile, ...sourceMetrics(profile, '', false) };
+      } catch { return null; }
+    }
+    return null;
+  }));
+  return fetched.filter(Boolean).slice(0, Math.min(MAX_LINEAGE_CHILDREN, availableSlots));
+}
+
 function referenceFingerprint(value: string, baseUrl: string) {
   try {
     const target = new URL(value); const origin = new URL(baseUrl);
@@ -562,17 +669,114 @@ async function enrichEvidenceTopology(artifact: any, discoveryConnectors: string
   return artifact;
 }
 
+type RecoveredPassageInput = { id:string; claim:string; title:string; url:string; excerpt:string; citedText:string; currentStance:string; currentEvidenceType:string };
+type FetchedPassageReview = { id:string; stance:'supports'|'refutes'|'context'|'unclear'; evidenceType:'direct_document'|'dataset'|'peer_reviewed'|'on_record_reporting'|'secondary_summary'|'commentary'|'unverified'; directness:number; assessment:string };
+
+async function assessRecoveredPassages(entries: RecoveredPassageInput[], client: OpenAI, model: string): Promise<Map<string, FetchedPassageReview>> {
+  if (!entries.length) return new Map<string, FetchedPassageReview>();
+  const prompt = `You are Sourceful's bounded fetched-passage reviewer. You have NO web access in this step. Assess only the recovered excerpt supplied for each source against its precise branch claim. Do not use the title, URL, reputation, or outside knowledge as evidence. Do not infer author credentials, methods, citations, or truth beyond the excerpt.
+
+For every input id, return exactly one review:
+- stance: supports, refutes, context, or unclear only in relation to the exact claim;
+- evidenceType: what this excerpt itself appears to supply;
+- directness: 0–100 for how directly this excerpt bears on that claim; and
+- assessment: one short cautious explanation anchored to the excerpt.
+
+If an excerpt is vague, tangential, or merely mentions the topic, use context or unclear and keep directness low. Do not treat an outgoing link, source title, or model-memory fact as corroboration.
+
+${JSON.stringify(entries)}`;
+  const response = await client.responses.create({ model, input:prompt, reasoning:{ effort:'low' }, text:{ verbosity:'low', format:{ type:'json_schema', ...fetchedPassageReviewSchema } } } as any);
+  let parsed: any;
+  try { parsed = JSON.parse(response.output_text); } catch { return new Map<string, FetchedPassageReview>(); }
+  const permitted = new Set(entries.map((entry) => entry.id));
+  const reviews = Array.isArray(parsed?.reviews) ? parsed.reviews : [];
+  const accepted: Array<[string, FetchedPassageReview]> = reviews.filter((review: any) => permitted.has(String(review?.id || ''))).map((review: any) => [String(review.id), { id:String(review.id), stance:review.stance, evidenceType:review.evidenceType, directness:clamp(Number(review.directness)), assessment:String(review.assessment || '').slice(0, 260) } satisfies FetchedPassageReview]);
+  return new Map<string, FetchedPassageReview>(accepted);
+}
+
+// This is a second, bounded evidence pass. The model sees only recovered source-page passages,
+// never an unrestricted page crawl, and it is permitted to revise only relation, evidence type,
+// and directness for the claim actually attached to that trace.
+async function reviewFetchedSourcePassages(artifact: any, client: OpenAI, model: string) {
+  const candidates = artifact.branches.flatMap((branch: any, branchIndex: number) => (branch.sources || []).map((source: any, sourceIndex: number) => ({ branch, source, id:`${branchIndex}:${sourceIndex}` })))
+    .filter(({ source }: any) => source.contentInspected && !source.fetchedPassageReviewed && Array.isArray(source.claimMatches) && source.claimMatches.length >= 2 && String(source.snippet || '').trim().length >= 80)
+    .slice(0, MAX_FETCHED_PASSAGE_REVIEWS);
+  if (!candidates.length) return artifact;
+  const inputs: RecoveredPassageInput[] = candidates.map(({ branch, source, id }: any) => ({ id, claim:String(branch.claim || '').slice(0, 800), title:String(source.title || '').slice(0, 260), url:String(source.url || '').slice(0, 1000), excerpt:String(source.snippet || '').slice(0, 900), citedText:String(source.citedText || '').slice(0, 300), currentStance:String(source.evidenceProfile?.stance || 'unclear'), currentEvidenceType:String(source.evidenceProfile?.evidenceType || 'secondary_summary') }));
+  try {
+    const reviews = await assessRecoveredPassages(inputs, client, model);
+    if (!reviews.size) return artifact;
+    const directSources = artifact.branches.flatMap((branch: any) => branch.sources || []);
+    const domains = new Map<string, number>(); directSources.forEach((source: any) => domains.set(hostFor(source.url), (domains.get(hostFor(source.url)) || 0) + 1));
+    let reviewed = 0;
+    for (const candidate of candidates) {
+      const review = reviews.get(candidate.id); if (!review) continue;
+      const previousProfile: Profile = candidate.source.evidenceProfile || { sourceType:'unknown', evidenceType:'secondary_summary', stance:'unclear', authorNamed:false, methodologyVisible:false, correctionsVisible:false, citedReferenceCount:0, directness:0, reliabilityFlags:['none'] };
+      const profile: Profile = { ...previousProfile, stance:review.stance, evidenceType:review.evidenceType, directness:clamp(review.directness) };
+      const recalculated = sourceMetrics(profile, candidate.source.publishedAt || '', (domains.get(hostFor(candidate.source.url)) || 0) > 1);
+      candidate.source.evidenceProfile = profile;
+      candidate.source.semanticDepth = profile.directness;
+      candidate.source.metrics = { ...candidate.source.metrics, ...recalculated.metrics, corroboration:candidate.source.metrics?.corroboration ?? 0 };
+      candidate.source.credibilityScore = recalculated.credibilityScore;
+      candidate.source.isDodgy = recalculated.isDodgy;
+      candidate.source.fetchedPassageReviewed = true;
+      candidate.source.fetchedPassageAssessment = review.assessment;
+      reviewed += 1;
+    }
+    if (reviewed) {
+      compoundedEvidenceScore(artifact, artifact.provenanceClusters || []);
+      artifact.researchMetadata = { ...(artifact.researchMetadata || {}), fetchedPassagesReviewed: Number(artifact.researchMetadata?.fetchedPassagesReviewed || 0) + reviewed };
+      artifact.evidenceStandard = `${artifact.evidenceStandard || 'Conservative evidence gate.'} ${reviewed} recovered source-page passage${reviewed === 1 ? '' : 's'} received a bounded, claim-specific second review.`;
+    }
+  } catch (error: any) {
+    // A secondary review is an enhancement, never a reason to discard the primary graph.
+    console.warn('Fetched passage review unavailable.', { status:error?.status, code:error?.code, requestId:error?.requestID || error?.request_id });
+  }
+  return artifact;
+}
+
+async function reviewLineagePassages(sources: any[], claim: string, client: OpenAI, model: string) {
+  const candidates = sources.filter((source) => Array.isArray(source.claimMatches) && source.claimMatches.length >= 2 && String(source.snippet || '').trim().length >= 80).slice(0, MAX_LINEAGE_CHILDREN);
+  const inputs: RecoveredPassageInput[] = candidates.map((source, index) => ({ id:`lineage:${index}`, claim:claim.slice(0, 800), title:String(source.title || '').slice(0, 260), url:String(source.url || '').slice(0, 1000), excerpt:String(source.snippet || '').slice(0, 900), citedText:String(source.citedText || '').slice(0, 300), currentStance:'context', currentEvidenceType:String(source.evidenceProfile?.evidenceType || 'secondary_summary') }));
+  try {
+    const reviews = await assessRecoveredPassages(inputs, client, model);
+    candidates.forEach((source, index) => {
+      const review = reviews.get(`lineage:${index}`); if (!review) return;
+      const profile: Profile = { ...(source.evidenceProfile || {}), stance:review.stance, evidenceType:review.evidenceType, directness:clamp(review.directness) };
+      const recalculated = sourceMetrics(profile, source.publishedAt || '', false);
+      source.evidenceProfile = profile;
+      source.semanticDepth = profile.directness;
+      source.metrics = recalculated.metrics;
+      source.credibilityScore = recalculated.credibilityScore;
+      source.isDodgy = recalculated.isDodgy;
+      source.fetchedPassageReviewed = true;
+      source.fetchedPassageAssessment = review.assessment;
+    });
+  } catch (error: any) {
+    console.warn('Lineage passage review unavailable.', { status:error?.status, code:error?.code, requestId:error?.requestID || error?.request_id });
+  }
+  return sources;
+}
+
 function normalizedClaim(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function sourceCount(artifact: any) {
-  return Array.isArray(artifact?.branches) ? artifact.branches.reduce((total: number, branch: any) => total + (Array.isArray(branch?.sources) ? branch.sources.length : 0), 0) : 0;
+  const countTree = (sources: any[]): number => sources.reduce((total, source) => total + 1 + (Array.isArray(source?.lineageSources) ? countTree(source.lineageSources) : 0), 0);
+  return Array.isArray(artifact?.branches) ? artifact.branches.reduce((total: number, branch: any) => total + (Array.isArray(branch?.sources) ? countTree(branch.sources) : 0), 0) : 0;
+}
+
+function sourceUrlsInArtifact(artifact: any) {
+  const urls = new Set<string>();
+  const visit = (sources: any[]) => sources.forEach((source) => { const key = canonicalSourceUrl(source?.url || ''); if (key) urls.add(key); if (Array.isArray(source?.lineageSources)) visit(source.lineageSources); });
+  if (Array.isArray(artifact?.branches)) artifact.branches.forEach((branch: any) => visit(Array.isArray(branch?.sources) ? branch.sources : []));
+  return urls;
 }
 
 function mergeExpansionArtifact(artifact: any, expansion: any) {
   const allowedNewSources = Math.max(0, MAX_GRAPH_SOURCES - sourceCount(artifact));
-  const seenSourceUrls = new Set(artifact.branches.flatMap((branch: any) => branch.sources).map((source: any) => canonicalSourceUrl(source.url)).filter(Boolean));
+  const seenSourceUrls = sourceUrlsInArtifact(artifact);
   const nextBranches: any[] = artifact.branches.map((branch: any) => ({ ...branch, sources:[...branch.sources] }));
   const branchByClaim = new Map<string, any>(nextBranches.map((branch: any) => [normalizedClaim(branch.claim), branch]));
   let added = 0;
@@ -697,11 +901,12 @@ async function startServer() {
       const googleResearch = useGoogleCrosscheck ? await getGeminiResearch(text || `Assess the attached file: ${file?.originalname || 'uploaded research lead'}`) : '';
       const routeDiscovery = await routeSpecificDiscovery(text || `Assess the attached file: ${file?.originalname || 'uploaded research lead'}`, route);
       const textAttachment = file && isTextUpload(file) ? `\n\nAttached research lead (${file.originalname}; supplied by the user, not proof):\n${file.buffer.toString('utf8').slice(0, 18000)}` : '';
-      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction}${textAttachment}${routeDiscovery.packet ? `\n\n--- Route-specific discovery packet ---\n${routeDiscovery.packet}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
+      const content: any[] = [{ type: 'input_text', text: `${text}\n\n--- Sourceful research protocol ---\n${routeProtocol(route, mathCheck)}\n\n--- Adaptive evidence-graph scope ---\n${adaptiveGraphInstruction(text, route, Boolean(file))}${textAttachment}${routeDiscovery.packet ? `\n\n--- Route-specific discovery packet ---\n${routeDiscovery.packet}` : ''}${googleResearch ? `\n\n--- Google-grounded cross-check packet ---\n${googleResearch}` : ''}` }];
       if (file?.mimetype.startsWith('image/')) content.push({ type: 'input_image', image_url: uploadDataUrl(file) });
       if (file && !isTextUpload(file) && !file.mimetype.startsWith('image/')) content.push({ type: 'input_file', filename: file.originalname, file_data: uploadDataUrl(file), detail: 'auto' });
       const response = await client.responses.create({ model, instructions, input: [{ role: 'user', content }], tools: [{ type: 'web_search' as any }], text: { format: { type: 'json_schema', ...schema } } } as any);
-      return res.json(await enrichEvidenceTopology(evaluateResult(JSON.parse(response.output_text), route, mathCheck), routeDiscovery.connectors));
+      const topology = await enrichEvidenceTopology(evaluateResult(JSON.parse(response.output_text), route, mathCheck), routeDiscovery.connectors);
+      return res.json(await reviewFetchedSourcePassages(topology, client, model));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Verification service unavailable.') }); }
   });
   app.post('/api/expand', rateLimit(6, 10 * 60_000), async (req, res) => {
@@ -730,8 +935,29 @@ async function startServer() {
       evaluated.researchMetadata = merged.researchMetadata;
       evaluated.evidenceRelations = artifact.evidenceRelations || [];
       evaluated.evidenceStandard = merged.evidenceStandard;
-      return res.json(await enrichEvidenceTopology(evaluated, routeDiscovery.connectors));
+      const topology = await enrichEvidenceTopology(evaluated, routeDiscovery.connectors);
+      return res.json(await reviewFetchedSourcePassages(topology, client, model));
     } catch (error: any) { return res.status(502).json({ error: safeOpenAiError(error, 'Evidence expansion service unavailable.') }); }
+  });
+  app.post('/api/lineage', rateLimit(8, 10 * 60_000), async (req, res) => {
+    const artifact = req.body?.artifact; const sourceId = String(req.body?.sourceId || ''); const claim = String(req.body?.claim || '').trim(); const model = String(req.body?.model || 'gpt-5.6-terra');
+    if (!artifact?.coreConcept || !Array.isArray(artifact?.branches) || !sourceId || !claim) return res.status(400).json({ error: 'A selected source and claim from the active research graph are required.' });
+    if (!modelRoster.has(model)) return res.status(400).json({ error: 'Unsupported Sourceful model.' });
+    if (artifact.isDemo) return res.status(400).json({ error: 'The guided demonstration is simulated. Trace lineage from a live research source instead.' });
+    // The BYOK gate keeps this public endpoint from becoming an unauthenticated web crawler;
+    // the key also funds the bounded excerpt review when lineage pages are recovered.
+    const apiKey = requestApiKey(req.body?.apiKey);
+    if (!apiKey) return res.status(401).json({ error: 'Connect an OpenAI API key to trace a source lineage.' });
+    const parent = artifact.branches.flatMap((branch: any) => branch.sources || []).find((source: any) => source.graphId === sourceId);
+    if (!parent?.url) return res.status(404).json({ error: 'This source is no longer part of the active graph.' });
+    if (Array.isArray(parent.lineageSources) && parent.lineageSources.length) return res.json({ parentSourceId:sourceId, lineageSources:parent.lineageSources, reused:true });
+    const availableSlots = Math.min(MAX_LINEAGE_CHILDREN, Math.max(0, MAX_GRAPH_SOURCES - sourceCount(artifact)));
+    if (!availableSlots) return res.status(400).json({ error: `This graph has reached its ${MAX_GRAPH_SOURCES}-source budget.` });
+    try {
+      const lineageSources = await fetchObservedLineage(parent.url, claim, sourceUrlsInArtifact(artifact), availableSlots);
+      if (lineageSources.length) await reviewLineagePassages(lineageSources, claim, new OpenAI({ apiKey }), model);
+      return res.json({ parentSourceId:sourceId, lineageSources, note: lineageSources.length ? 'Lineage leads are fetched public outbound references. They remain separate from claim support and refutation until independently evaluated.' : 'No safely fetchable, claim-relevant outgoing references were available from this source page.' });
+    } catch { return res.status(502).json({ error: 'Source-lineage fetch unavailable.' }); }
   });
   if (process.env.NODE_ENV !== 'production') { const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' }); app.use(vite.middlewares); }
   else { const distPath = path.join(process.cwd(), 'dist'); app.use(express.static(distPath)); app.get('*', (_req,res) => res.sendFile(path.join(distPath, 'index.html'))); }

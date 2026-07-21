@@ -161,6 +161,7 @@ body {
 .result-new-search { display:inline-flex; flex:0 0 auto; align-items:center; gap:6px; white-space:nowrap; }
 .source-dossier,.artifact-library { z-index:210!important; top:max(76px,calc(env(safe-area-inset-top) + 60px))!important; bottom:max(16px,env(safe-area-inset-bottom))!important; width:min(360px,calc(100vw - 32px))!important; max-width:calc(100vw - 32px)!important; }
 .source-dossier { left:max(16px,env(safe-area-inset-left))!important; right:auto!important; }
+.source-dossier.panel-foreground,.artifact-library.panel-foreground,.about-panel.panel-foreground { z-index:230!important; }
 .artifact-library { right:max(16px,env(safe-area-inset-right))!important; left:auto!important; }
 .about-panel { z-index:215!important; top:max(76px,calc(env(safe-area-inset-top) + 60px))!important; right:max(16px,env(safe-area-inset-right))!important; left:auto!important; width:min(400px,calc(100vw - 32px))!important; max-height:calc(100dvh - 92px); overflow:auto; }
 .explore-guide { z-index:205!important; right:max(16px,env(safe-area-inset-right))!important; bottom:max(16px,env(safe-area-inset-bottom))!important; left:auto!important; }
@@ -215,6 +216,12 @@ body {
 @media (max-width:720px) { .sourceful-viewport-ui .research-brief-modal { align-items:center; padding:16px 12px max(16px,env(safe-area-inset-bottom)); }.sourceful-viewport-ui .research-brief-modal .research-brief-panel { width:calc(100vw - 24px)!important; max-height:min(80dvh,760px)!important; border-radius:18px; } }
 @media (max-width:520px) { .brief-link-ledger li { grid-template-columns:minmax(0,1fr) auto; }.brief-link-ledger li a:nth-of-type(2) { grid-column:1 / -1; }.brief-link-ledger li > span { grid-column:2; grid-row:1; }.brief-link-ledger b { grid-column:1 / -1; } }
 
+/* Brief generation uses the same restrained travelling-edge language as the research composer. */
+.brief-button { position:relative; isolation:isolate; overflow:hidden; }.brief-button > * { position:relative; z-index:1; }.brief-button.is-writing { color:#f3d17d; background:rgba(184,137,41,.08); box-shadow:0 0 20px rgba(227,182,79,.17); }.brief-button.is-writing:before { position:absolute; z-index:0; inset:0; padding:1px; border-radius:inherit; content:""; background:linear-gradient(90deg,transparent 0%,rgba(235,190,86,.1) 24%,rgba(255,239,181,.98) 46%,rgba(220,156,42,.75) 53%,rgba(235,190,86,.1) 70%,transparent 100%) 190% 0/190% 100%; animation:brief-edge-current 1.05s linear infinite; -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; filter:blur(.25px); }.brief-button.is-writing svg { animation:brief-spark-pulse .78s ease-in-out infinite alternate; } @keyframes brief-edge-current { from { background-position:190% 0; } to { background-position:0 0; } } @keyframes brief-spark-pulse { to { transform:scale(1.18) rotate(15deg); filter:drop-shadow(0 0 5px rgba(255,226,139,.9)); } }
+.brief-panel-actions { display:flex; align-items:center; gap:6px; }.dossier-topline .brief-panel-actions button { display:inline-flex; align-items:center; gap:4px; min-height:26px; padding:5px 7px; border:1px solid rgba(193,151,61,.34); border-radius:7px; background:rgba(190,146,48,.07); color:#cfaa56; font:700 8px var(--font-mono); letter-spacing:.06em; }.dossier-topline .brief-panel-actions button:hover { border-color:rgba(232,193,98,.7); background:rgba(195,150,50,.16); box-shadow:0 0 16px rgba(220,175,76,.14); }.dossier-topline .brief-panel-actions button:last-child { border-color:transparent; background:transparent; padding:5px; }
+.brief-refresh-notice { display:flex; align-items:flex-start; gap:8px; margin:16px 0 -4px; padding:10px 12px; border:1px solid rgba(232,178,69,.38); border-radius:10px; background:linear-gradient(135deg,rgba(184,131,31,.15),rgba(119,73,16,.07)); color:#e6c277; font:600 10px/1.5 var(--font-mono); letter-spacing:.02em; }.brief-refresh-notice svg { flex:0 0 auto; margin-top:1px; color:#f1ca68; filter:drop-shadow(0 0 6px rgba(241,202,104,.45)); }.brief-button.needs-refresh { border-color:rgba(233,181,72,.58); color:#f0c96d; box-shadow:0 0 18px rgba(221,167,58,.13); }
+.dossier-light .brief-refresh-notice { border-color:rgba(174,119,19,.3); background:linear-gradient(135deg,rgba(255,237,192,.64),rgba(255,248,231,.58)); color:#89580e; }
+
 /* The research state is an intelligible map being formed, not a generic waiting screen. */
 .research-loading-panel { border:1px solid rgba(109,166,240,.34)!important; background:linear-gradient(135deg,rgba(237,248,255,.48),rgba(255,255,255,.12))!important; box-shadow:0 28px 90px rgba(45,105,177,.18),inset 0 1px 0 rgba(255,255,255,.74)!important; backdrop-filter:blur(30px) saturate(145%)!important; }
 .dark .research-loading-panel { background:linear-gradient(135deg,rgba(12,26,49,.72),rgba(11,17,30,.46))!important; box-shadow:0 28px 90px rgba(0,0,0,.5),inset 0 1px 0 rgba(183,223,255,.13)!important; }
@@ -233,6 +240,17 @@ body {
 .research-build-copy small { color:#5e6f86; font:500 10px/1.45 var(--font-sans); }
 .dark .research-build-copy small { color:#9aabc0; }
 .research-build-copy .pause-research { margin-top:4px; }
+
+/* A live pass is a focused state. Existing dossiers stay mounted underneath so no work is
+   lost, but the overlay owns the viewport until the pass finishes or is stopped. */
+.sourceful-viewport-ui .research-loading-modal { position:fixed; z-index:1600; inset:0; display:grid; place-items:center; box-sizing:border-box; padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left)); overflow:hidden; pointer-events:auto; background:rgba(2,7,15,.37); backdrop-filter:blur(13px) saturate(122%); -webkit-backdrop-filter:blur(13px) saturate(122%); }
+.sourceful-viewport-ui .research-loading-modal:before { position:absolute; z-index:-1; inset:0; content:""; background:radial-gradient(circle at 50% 48%,rgba(72,132,236,.16),transparent 38%),linear-gradient(180deg,rgba(3,9,18,.08),rgba(3,9,18,.28)); }
+.sourceful-viewport-ui .research-loading-modal-card { position:relative; box-sizing:border-box; width:min(960px,calc(100vw - 40px)); min-height:316px; overflow:hidden; border:1px solid rgba(109,166,240,.43); border-radius:32px; background:linear-gradient(135deg,rgba(16,34,69,.88),rgba(9,18,35,.82)); box-shadow:0 32px 120px rgba(0,0,0,.56),0 0 74px rgba(69,136,245,.2),inset 0 1px rgba(217,239,255,.16); backdrop-filter:blur(28px) saturate(145%); -webkit-backdrop-filter:blur(28px) saturate(145%); }
+.sourceful-viewport-ui .research-loading-modal-card .research-build-loader { min-height:316px; }
+.light .sourceful-viewport-ui .research-loading-modal { background:rgba(237,243,250,.34); }
+.light .sourceful-viewport-ui .research-loading-modal:before { background:radial-gradient(circle at 50% 46%,rgba(88,144,235,.17),transparent 40%),rgba(246,249,253,.14); }
+.light .sourceful-viewport-ui .research-loading-modal-card { border-color:rgba(86,140,217,.38); background:linear-gradient(135deg,rgba(245,250,255,.9),rgba(233,241,252,.82)); box-shadow:0 30px 100px rgba(65,84,109,.28),0 0 60px rgba(82,143,230,.14),inset 0 1px rgba(255,255,255,.9); }
+@media (max-width:720px) { .sourceful-viewport-ui .research-loading-modal { padding:14px 12px max(14px,env(safe-area-inset-bottom)); }.sourceful-viewport-ui .research-loading-modal-card { width:calc(100vw - 24px); min-height:280px; border-radius:22px; }.sourceful-viewport-ui .research-loading-modal-card .research-build-loader { min-height:280px; } }
 @media (max-width:720px) {
   .result-toolbar { left:12px!important; right:12px!important; }
   .result-mode-cluster { touch-action:pan-x; overscroll-behavior-x:contain; }
@@ -295,6 +313,14 @@ body {
 .dossier-light .about-read-guide { background:linear-gradient(135deg,rgba(69,136,223,.08),rgba(255,248,228,.72)); border-color:rgba(88,137,200,.2); }
 .dossier-light .about-read-guide li { color:#536174; }
 .dossier-light .about-read-guide h3 { color:#3971b5; }
+.about-colour-key { margin:14px 0 0; padding:14px; border:1px solid rgba(214,171,73,.22); border-radius:12px; background:rgba(188,139,41,.05); }
+.about-colour-key h3 { margin:0; color:#e0b650; font:700 10px var(--font-mono); letter-spacing:.1em; text-transform:uppercase; }
+.about-colour-key ul { display:grid; gap:8px; margin:12px 0 0; padding:0; list-style:none; }
+.about-colour-key li { display:grid; grid-template-columns:12px minmax(0,1fr); gap:9px; align-items:start; color:#b8c2d1; font:11px/1.4 var(--font-sans); }
+.about-colour-key li > i { width:10px; height:10px; margin-top:3px; border-radius:50%; box-shadow:0 0 12px currentColor; }
+.about-colour-key li b { display:block; margin-bottom:1px; color:#f0e1b9; font:700 9px var(--font-mono); letter-spacing:.04em; text-transform:uppercase; }
+.about-colour-key .core { color:#d4a64b; background:#d4a64b; }.about-colour-key .support { color:#61c69a; background:#61c69a; }.about-colour-key .direct-support { color:#a4f29a; background:#a4f29a; }.about-colour-key .context { color:#d6ab59; background:#d6ab59; }.about-colour-key .refute { color:#f27d89; background:#f27d89; }.about-colour-key .lineage { color:#78b9df; background:#78b9df; }
+.dossier-light .about-colour-key { border-color:rgba(150,108,33,.24); background:rgba(251,242,220,.7); }.dossier-light .about-colour-key li { color:#536174; }.dossier-light .about-colour-key li b { color:#75531a; }
 
 /* A preview is an anchored plaque, not a screen-covering overlay. */
 .universe-label { width:min(260px,36vw); transform:translateY(-50%) translateZ(0); }

@@ -13,6 +13,10 @@ export interface Source {
   /** Exact terms from the active claim that occur in the fetched source extract. */
   claimMatches?: string[];
   contentInspected?: boolean;
+  /** GPT reviewed a bounded recovered passage from this page against the active claim. */
+  fetchedPassageReviewed?: boolean;
+  /** Cautious, source-specific explanation generated only from the recovered passage. */
+  fetchedPassageAssessment?: string;
   credibilityScore?: number;
   isDodgy?: boolean;
   isKilled?: boolean;
@@ -23,9 +27,15 @@ export interface Source {
   observedReferenceCount?: number;
   /** Canonical fingerprints of public references observed on this page. They describe provenance overlap, never proof. */
   citationFingerprints?: string[];
+  /** Up to three server-fetched, observed outgoing references. These are provenance leads, not automatically supporting evidence. */
+  lineageSources?: Source[];
+  /** A lineage lead is displayed below the source that linked to it and is excluded from branch scoring. */
+  isLineageLead?: boolean;
+  lineageParentId?: string;
+  lineageNote?: string;
   semanticDepth?: number;
   verificationStatus?: 'checking' | 'verified' | 'contested';
-  provider?: 'openai_web' | 'gemini_google';
+  provider?: 'openai_web' | 'gemini_google' | 'sourceful_lineage';
   evidenceProfile?: EvidenceProfile;
   metrics?: SourceMetrics;
   /** An auditable path from the source to the current claim, not a probability that the claim is true. */

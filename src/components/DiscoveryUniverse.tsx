@@ -99,12 +99,21 @@ function Orb({ nodeId, active, selected = false, lineage = false, labelMode, onF
 
 function sourceTone(source: Source) {
   const directness = source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 0;
+  if (source.isLineageLead) return '#78b9df';
   if (source.isDodgy) return '#df7772';
   if (source.evidenceProfile?.stance === 'refutes') return '#f27d89';
   if (source.evidenceProfile?.stance === 'context') return '#d6ab59';
   if (source.evidenceProfile?.stance === 'supports' && directness >= 90) return '#a4f29a';
   if (source.evidenceProfile?.stance === 'supports') return '#61c69a';
   return '#78b9df';
+}
+
+function sourceTreeIncludes(source: Source, sourceId: string) {
+  return source.graphId === sourceId || Boolean(source.lineageSources?.some((child) => sourceTreeIncludes(child, sourceId)));
+}
+
+function sourceTreeCount(sources: Source[]): number {
+  return sources.reduce((total, source) => total + 1 + (source.lineageSources?.length ? sourceTreeCount(source.lineageSources) : 0), 0);
 }
 
 function claimTone(branch: Branch) {
@@ -135,8 +144,8 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, driftPaused = f
   const branches = data.branches;
   const [activeNode, setActiveNode] = useState<string | null>(null);
   const focusNode = (nodeId: string | null, releasedNodeId?: string) => setActiveNode((currentNode) => nodeId === null && releasedNodeId && currentNode !== releasedNodeId ? currentNode : nodeId);
-  const selectedBranchIndex = useMemo(() => selectedSourceId ? branches.findIndex((branch) => branch.sources.some((source) => source.graphId === selectedSourceId)) : selectedClaimId ? branches.findIndex((branch) => branch.graphId === selectedClaimId) : -1, [branches, selectedClaimId, selectedSourceId]);
-  const totalSources = branches.reduce((total, branch) => total + branch.sources.length, 0);
+  const selectedBranchIndex = useMemo(() => selectedSourceId ? branches.findIndex((branch) => branch.sources.some((source) => sourceTreeIncludes(source, selectedSourceId))) : selectedClaimId ? branches.findIndex((branch) => branch.graphId === selectedClaimId) : -1, [branches, selectedClaimId, selectedSourceId]);
+  const totalSources = branches.reduce((total, branch) => total + sourceTreeCount(branch.sources), 0);
   const branchDistances = useMemo(() => branches.map(branchEvidenceDistance), [branches]);
   const outerRadius = Math.max(3.5, ...branchDistances);
   const sceneRadius = outerRadius + 3.25;
@@ -177,6 +186,20 @@ export function DiscoveryUniverse({ data, isDarkMode, labelMode, driftPaused = f
             <Line points={[points[index], sourcePos]} color={isSelectedSource ? '#ffe29a' : color} lineWidth={isSelectedSource ? 1.65 : .72} transparent opacity={isSelectedSource ? .96 : .55}/>
             <Pulse start={points[index]} end={sourcePos} color={color} delay={index * .12 + sourceIndex * .09} active={isSelectedSource}/>
             <Orb nodeId={sourceNodeId} active={activeNode === sourceNodeId} selected={isSelectedSource} labelMode={labelMode} onFocus={focusNode} position={sourcePos} color={color} size={Math.max(.16, .27 - Math.max(0, totalSources - 12) * .003) + (directSupport ? .028 : 0)} label={`${stance === 'refutes' ? 'REFUTING TRACE' : directSupport ? `DIRECT SUPPORT ${directness}%` : stance === 'supports' ? 'SUPPORTING TRACE' : stance === 'context' ? 'CONTEXT TRACE' : 'UNRESOLVED TRACE'} · CRED ${credibility}%${pathSuffix}`} detail={source.title} preview={source.snippet} citedText={source.citedText} imageUrl={source.imageUrl} onClick={() => onSourceSelect(source)} order={index + sourceIndex + 2} disintegrating={isDisintegrating} onDisintegrationComplete={isDisintegrating ? onDisintegrationComplete : undefined}/>
+            {(source.lineageSources || []).slice(0, 3).map((lineage, lineageIndex) => {
+              const lineageCount = Math.min(3, source.lineageSources?.length || 0);
+              const lineageAngle = sourceAngle + (lineageIndex - (lineageCount - 1) / 2) * .48;
+              const lineageDistance = .43 + lineageIndex * .055;
+              const lineagePos: [number, number, number] = [sourcePos[0] + Math.cos(lineageAngle) * lineageDistance, sourcePos[1] + Math.sin(lineageAngle) * lineageDistance * .72, sourcePos[2] - .46 - lineageIndex * .035];
+              const isSelectedLineage = lineage.graphId === selectedSourceId;
+              const lineageNodeId = `lineage-${index}-${sourceIndex}-${lineageIndex}`;
+              return <React.Fragment key={lineage.graphId || lineageNodeId}>
+                {isSelectedLineage && <Line points={[sourcePos, lineagePos]} color="#ffe29a" lineWidth={3.4} transparent opacity={.46}/>}
+                <Line points={[sourcePos, lineagePos]} color={isSelectedLineage ? '#ffe29a' : '#78b9df'} lineWidth={isSelectedLineage ? 1.45 : .56} transparent opacity={isSelectedLineage ? .96 : .56}/>
+                <Pulse start={sourcePos} end={lineagePos} color="#78b9df" delay={index * .1 + sourceIndex * .07 + lineageIndex * .12} active={isSelectedLineage}/>
+                <Orb nodeId={lineageNodeId} active={activeNode === lineageNodeId} selected={isSelectedLineage} lineage labelMode={labelMode} onFocus={focusNode} position={lineagePos} color="#78b9df" size={Math.max(.115, .17 - Math.max(0, totalSources - 15) * .002)} label={`OBSERVED LINEAGE · CRED ${lineage.credibilityScore ?? '—'}%`} detail={lineage.title} preview={lineage.snippet} citedText={lineage.citedText} imageUrl={lineage.imageUrl} onClick={() => onSourceSelect(lineage)} order={index + sourceIndex + lineageIndex + 2.55}/>
+              </React.Fragment>;
+            })}
           </React.Fragment>;
         })}
       </React.Fragment>;

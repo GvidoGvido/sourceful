@@ -21,6 +21,7 @@ type PinchGesture = { distance: number; centerX: number; centerY: number; localX
 
 const sourceDirectness = (source: Source) => source.credibilityPath?.directness ?? source.evidenceProfile?.directness ?? source.metrics?.semanticDepth ?? 45;
 const readableText = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value.trim() : fallback;
+const traceCount = (sources: Source[]): number => sources.reduce((total, source) => total + 1 + (source.lineageSources?.length ? traceCount(source.lineageSources) : 0), 0);
 
 const generateLayout = (data: VerificationResult) => {
   const CORE_W = 380;
@@ -33,6 +34,8 @@ const generateLayout = (data: VerificationResult) => {
   
   const SOURCE_W = 400;
   const SOURCE_H = 430;
+  const LINEAGE_W = 286;
+  const LINEAGE_H = 148;
   
   const GAP_X = 210;
   const GAP_Y = 72;
@@ -68,11 +71,28 @@ const generateLayout = (data: VerificationResult) => {
         data: source,
         branchData: branch,
         branchId: `branch-${bIdx}`,
+        parentId: `branch-${bIdx}`,
         x: sourceBaseX + sourceColumn * (SOURCE_W + GAP_X * .55) + (100 - (sourceDirectness(source) * .7 + (source.credibilityScore ?? 50) * .3)) * .34,
         y: startY + sourceRow * (SOURCE_H + GAP_Y),
         width: SOURCE_W,
         height: SOURCE_H,
         animOrder: 2 + (bIdx * 0.5) + (sIdx * 0.2) // for staggered animation
+      });
+    });
+
+    // A lineage lead is deliberately a smaller third-layer card. It is an observed outgoing
+    // reference from its parent page, not another vote in the branch's support/refutation score.
+    branch.sources.forEach((source, sIdx) => {
+      const parentNode = nodes.find((node) => node.id === `source-${bIdx}-${sIdx}`);
+      const lineage = source.lineageSources || []; if (!parentNode || !lineage.length) return;
+      lineage.slice(0, 3).forEach((child, childIndex) => {
+        const childId = `lineage-${bIdx}-${sIdx}-${childIndex}`;
+        // Keep child cards in dedicated outer lanes. Placing them immediately after their
+        // parent would overlap the second direct-source column in a two-column source row.
+        const childX = sourceBaseX + SOURCES_PER_ROW * (SOURCE_W + GAP_X * .55) + GAP_X * 1.1 + sIdx * (LINEAGE_W + 84);
+        const childY = parentNode.y + (childIndex - (lineage.length - 1) / 2) * (LINEAGE_H + 18) + (SOURCE_H - LINEAGE_H) / 2;
+        nodes.push({ id:childId, type:'lineage', data:child, branchData:branch, branchId:`branch-${bIdx}`, parentId:parentNode.id, x:childX, y:childY, width:LINEAGE_W, height:LINEAGE_H, animOrder:2.4 + (bIdx * .5) + (sIdx * .2) + childIndex * .12 });
+        edges.push({ id:`edge-source-${bIdx}-${sIdx}-lineage-${childIndex}`, startX:parentNode.x + SOURCE_W, startY:parentNode.y + SOURCE_H / 2, endX:childX, endY:childY + LINEAGE_H / 2, stance:'context', relation:'lineage', observed:true, fromNodeId:parentNode.id, toNodeId:childId, animOrder:2.25 + (bIdx * .5) + (sIdx * .2) + childIndex * .12 });
       });
     });
     
@@ -222,7 +242,7 @@ function MicroNodeBurst({ isDodgy }: { isDodgy: boolean }) {
 
 export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, selectedSourceId, selectedClaimId, disintegratingSourceId, disintegratingClaimId, onDisintegrationComplete }: NodeGraphProps) {
   const { nodes, edges, bounds } = useMemo(() => generateLayout(data), [data]);
-  const selectedSourceNode = useMemo(() => selectedSourceId ? nodes.find((node) => node.type === 'source' && node.data.graphId === selectedSourceId) : undefined, [nodes, selectedSourceId]);
+  const selectedSourceNode = useMemo(() => selectedSourceId ? nodes.find((node) => (node.type === 'source' || node.type === 'lineage') && node.data.graphId === selectedSourceId) : undefined, [nodes, selectedSourceId]);
   const selectedClaimNode = useMemo(() => selectedSourceNode ? nodes.find((node) => node.id === selectedSourceNode.branchId) : selectedClaimId ? nodes.find((node) => node.type === 'branch' && node.data.graphId === selectedClaimId) : undefined, [nodes, selectedClaimId, selectedSourceNode]);
   const activeLineage = useMemo(() => {
     const lineage = new Set<string>();
@@ -282,14 +302,14 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
   return (
     <div ref={boardRef} className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing touch-none select-none" onWheel={(event) => { event.preventDefault(); zoomAt(view.zoom * (event.deltaY > 0 ? .84 : 1.18), event.clientX, event.clientY); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest('button, a, input, details, [data-board-control]')) return; pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); event.currentTarget.setPointerCapture(event.pointerId); if (pointersRef.current.size === 2) beginPinch(); else if (pointersRef.current.size === 1) panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y }; }} onPointerMove={(event) => { const pointer = pointersRef.current.get(event.pointerId); if (!pointer) return; pointer.x = event.clientX; pointer.y = event.clientY; const pinch = pinchRef.current; if (pinch && pointersRef.current.size === 2) { const [first, second] = [...pointersRef.current.values()]; const distance = Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)); const centerX = (first.x + second.x) / 2; const centerY = (first.y + second.y) / 2; const zoom = clampZoom(pinch.zoom * (distance / pinch.distance)); const ratio = zoom / pinch.zoom; setView({ x: pinch.localX - (pinch.localX - pinch.viewX) * ratio + centerX - pinch.centerX, y: pinch.localY - (pinch.localY - pinch.viewY) * ratio + centerY - pinch.centerY, zoom }); return; } const pan = panRef.current; if (!pan || pan.pointerId !== event.pointerId) return; setView((current) => ({ ...current, x: pan.viewX + event.clientX - pan.x, y: pan.viewY + event.clientY - pan.y })); }} onPointerUp={(event) => { pointersRef.current.delete(event.pointerId); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); panRef.current = null; pinchRef.current = null; }} onPointerCancel={(event) => { pointersRef.current.delete(event.pointerId); panRef.current = null; pinchRef.current = null; }}>
       <div className="board-zoom-controls" data-board-control onPointerDown={(event) => event.stopPropagation()}><button onClick={() => changeZoom(.12)} title="Zoom in"><Plus size={15}/></button><span>{Math.round(view.zoom * 100)}%</span><button onClick={() => changeZoom(-.12)} title="Zoom out"><Minus size={15}/></button><button onClick={fitGraph} title="Fit entire knowledge graph"><Maximize2 size={14}/></button></div>
-      <div className="board-evidence-key" data-board-control>Pass {data.researchMetadata?.completedPasses || 1}/{data.researchMetadata?.maxPasses || 4} · {data.branches.reduce((total, branch) => total + branch.sources.length, 0)}/{data.researchMetadata?.nodeBudget || 60} traces · <i/> observed source-page link{data.researchMetadata?.sharedCitationClusters ? ` · ${data.researchMetadata.sharedCitationClusters} shared-reference path${data.researchMetadata.sharedCitationClusters === 1 ? '' : 's'}` : ''}</div>
+      <div className="board-evidence-key" data-board-control>Pass {data.researchMetadata?.completedPasses || 1}/{data.researchMetadata?.maxPasses || 4} · {data.branches.reduce((total, branch) => total + traceCount(branch.sources), 0)}/{data.researchMetadata?.nodeBudget || 60} traces · <i/> observed source-page link{data.researchMetadata?.sharedCitationClusters ? ` · ${data.researchMetadata.sharedCitationClusters} shared-reference path${data.researchMetadata.sharedCitationClusters === 1 ? '' : 's'}` : ''}</div>
       <div className="board-world" style={{ transform: `translate3d(calc(-50% + ${view.x}px), calc(-50% + ${view.y}px), 0) scale(${view.zoom})` }}>
         <div className="relative pointer-events-none" style={{ width: 0, height: 0 }}>
           
           {/* Edges */}
           <svg className="absolute overflow-visible z-0 pointer-events-none" style={{ top: 0, left: 0 }}>
             {edges.map(edge => {
-              const pathColor = edge.relation === 'references' ? (isDarkMode ? '#b592ff' : '#7c3aed') : edge.relation === 'shared_citation' ? (isDarkMode ? '#c084fc' : '#9333ea') : edge.relation === 'shared_publisher' ? (isDarkMode ? '#64748b' : '#64748b') : edge.isDodgy ? (isDarkMode ? '#ef4444' : '#dc2626') : edge.stance === 'refutes' ? (isDarkMode ? '#fb7185' : '#e11d48') : edge.stance === 'context' ? (isDarkMode ? '#fbbf24' : '#d97706') : edge.stance === 'supports' ? (isDarkMode ? '#5ee3ae' : '#059669') : (isDarkMode ? '#60a5fa' : '#2563eb');
+              const pathColor = edge.relation === 'lineage' ? (isDarkMode ? '#79bfff' : '#2563eb') : edge.relation === 'references' ? (isDarkMode ? '#b592ff' : '#7c3aed') : edge.relation === 'shared_citation' ? (isDarkMode ? '#c084fc' : '#9333ea') : edge.relation === 'shared_publisher' ? (isDarkMode ? '#64748b' : '#64748b') : edge.isDodgy ? (isDarkMode ? '#ef4444' : '#dc2626') : edge.stance === 'refutes' ? (isDarkMode ? '#fb7185' : '#e11d48') : edge.stance === 'context' ? (isDarkMode ? '#fbbf24' : '#d97706') : edge.stance === 'supports' ? (isDarkMode ? '#5ee3ae' : '#059669') : (isDarkMode ? '#60a5fa' : '#2563eb');
               const isActivePath = Boolean(edge.fromNodeId && edge.toNodeId && activeLineage.has(edge.fromNodeId) && activeLineage.has(edge.toNodeId));
               const glowColor = isDarkMode ? '#f8d47c' : '#b7791f';
                 
@@ -359,9 +379,9 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
           {/* Nodes */}
           {nodes.map(node => {
             const isDisintegrating = (node.type === 'source' && node.data.graphId === disintegratingSourceId) || (node.type === 'branch' && node.data.graphId === disintegratingClaimId);
-            const fadingWithClaim = node.type === 'source' && node.branchData?.graphId === disintegratingClaimId;
+            const fadingWithClaim = (node.type === 'source' || node.type === 'lineage') && node.branchData?.graphId === disintegratingClaimId;
             const isSelectedNode = activeLineage.has(node.id);
-            const isDirectSelection = (node.type === 'source' && node.data.graphId === selectedSourceId) || (node.type === 'branch' && node.data.graphId === selectedClaimId);
+            const isDirectSelection = ((node.type === 'source' || node.type === 'lineage') && node.data.graphId === selectedSourceId) || (node.type === 'branch' && node.data.graphId === selectedClaimId);
             return (
             <motion.div
               key={node.id}
@@ -383,6 +403,7 @@ export function NodeGraph({ data, isDarkMode, onSourceSelect, onClaimSelect, sel
               {node.type === 'core' && <CoreNode data={node.data} isDarkMode={isDarkMode} energized={false} />}
               {node.type === 'branch' && <BranchNode data={node.data} isDarkMode={isDarkMode} onSelect={onClaimSelect} energized={isDirectSelection} selected={isDirectSelection} />}
               {node.type === 'source' && <SourceNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isDirectSelection} selected={isDirectSelection} />}
+              {node.type === 'lineage' && <LineageNode source={node.data} isDarkMode={isDarkMode} onSelect={onSourceSelect} energized={isDirectSelection} selected={isDirectSelection} />}
               {isDisintegrating && <MicroNodeBurst isDodgy={node.data.isDodgy}/>} 
             </motion.div>
             );
@@ -466,6 +487,21 @@ function BranchNode({ data, isDarkMode, onSelect, energized, selected }: { data:
   );
 }
 
+function LineageNode({ source, isDarkMode, onSelect, energized, selected }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void, energized?: boolean, selected?: boolean }) {
+  return <button type="button" onClick={() => onSelect?.(source)} title="Open observed source lineage dossier" className={cn(
+    'lineage-source-node w-full h-full rounded-xl border p-4 text-left overflow-hidden relative cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-sky-300/70',
+    isDarkMode ? 'bg-slate-950/88 border-sky-400/35 text-slate-100' : 'bg-white/92 border-sky-500/35 text-slate-800',
+    energized && 'border-amber-300/90 ring-2 ring-amber-300/60 shadow-[0_0_38px_-5px_rgba(248,212,124,.74)]',
+    selected && 'node-selected-trace'
+  )}>
+    <div className="absolute inset-y-0 left-0 w-1 bg-sky-400 shadow-[0_0_16px_rgba(96,191,255,.9)]"/>
+    <div className="flex items-center gap-2 text-[9px] font-mono font-bold tracking-[.16em] text-sky-300"><Link2 size={12}/> OBSERVED LINEAGE</div>
+    <h3 className="mt-2 line-clamp-2 text-sm font-bold leading-snug">{source.title}</h3>
+    <p className={cn('mt-2 line-clamp-2 text-[11px] leading-relaxed', isDarkMode ? 'text-slate-400' : 'text-slate-600')}>{source.snippet}</p>
+    <span className="absolute right-3 bottom-3 text-[9px] font-mono tracking-[.1em] text-sky-300">OPEN TRACE ↗</span>
+  </button>;
+}
+
 function SourceNode({ source, isDarkMode, onSelect, energized, selected }: { source: Source, isDarkMode: boolean, onSelect?: (source: Source) => void, energized?: boolean, selected?: boolean }) {
   const isDodgy = source.isDodgy;
   const stance = source.evidenceProfile?.stance || 'unclear';
@@ -477,7 +513,7 @@ function SourceNode({ source, isDarkMode, onSelect, energized, selected }: { sou
   const directSupport = stance === 'supports' && directness >= 90 && !isDodgy;
   
   return (
-    <button onClick={() => onSelect?.(source)} className={cn(
+    <button type="button" onClick={() => onSelect?.(source)} className={cn(
       "w-full h-full rounded-2xl border flex flex-col shadow-2xl transition-all duration-500 overflow-hidden relative group text-left cursor-pointer hover:-translate-y-1 hover:scale-[1.015] focus:outline-none focus:ring-2 focus:ring-amber-400/70",
       isDarkMode 
         ? (isDodgy ? "bg-slate-900/95 border-red-500/50 shadow-[0_0_40px_-10px_rgba(239,68,68,0.3)]" : "bg-slate-900/95 border-blue-500/30 shadow-[0_0_40px_-10px_rgba(59,130,246,0.2)]") 
